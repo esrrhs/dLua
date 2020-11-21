@@ -11,6 +11,13 @@ int usage() {
 int init_env(int pid) {
     DLOG("init_env start %d", pid);
 
+//    int out;
+//    char cmd[256] = {0};
+//    snprintf(cmd, sizeof(cmd),"./hookso arg %s liblua.so lua_settop 1");
+//    cmd+=" "+std::to_string(pid);
+//    std::string ret = exec_command("./hookso", out);
+
+
     return 0;
 }
 

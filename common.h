@@ -30,6 +30,8 @@
 #include <set>
 #include <sys/ipc.h>
 #include <sys/msg.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 const int open_debug = 1;
 
@@ -126,6 +128,32 @@ static int open_msg_queue(const char *tmpfilename, int pid) {
     DLOG("qid %d", qid);
 
     return qid;
+}
+
+std::string exec_command(const char *cmd, int &out) {
+    out = 0;
+    auto pPipe = ::popen(cmd, "r");
+    if (pPipe == nullptr) {
+        out = -1;
+        return "";
+    }
+
+    std::array<char, 256> buffer;
+
+    std::string result;
+
+    while (not std::feof(pPipe)) {
+        auto bytes = std::fread(buffer.data(), 1, buffer.size(), pPipe);
+        result.append(buffer.data(), bytes);
+    }
+
+    auto rc = ::pclose(pPipe);
+
+    if (WIFEXITED(rc)) {
+        out = WEXITSTATUS(rc);
+    }
+
+    return result;
 }
 
 #endif //DLUA_COMMON_H
