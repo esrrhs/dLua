@@ -75,7 +75,7 @@ static int send_msg(int qid, int type, const char *data) {
     msg.payload[QUEUED_MESSAGE_MSG_LEN] = 0;
     int msgsz = strlen(msg.payload);
     if (msgsnd(qid, &msg, msgsz, 0) != 0) {
-        DERR("send_msg error %d %s", errno, strerror(errno));
+        DERR("send_msg %d %d error %d %s", qid, msgsz, errno, strerror(errno));
         return -1;
     }
     return 0;

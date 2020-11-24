@@ -8,6 +8,8 @@ extern "C" {
 
 int g_qid_send;
 int g_qid_recv;
+lua_State *g_L;
+int g_pid;
 
 static void hook_handler(lua_State *L, lua_Debug *par) {
     if (par->event != LUA_HOOKLINE) {
@@ -63,6 +65,8 @@ extern "C" int start_agent(lua_State *L, int pid) {
     }
     g_qid_send = qid2;
     g_qid_recv = qid1;
+    g_pid = pid;
+    g_L = L;
 
     lua_sethook(L, hook_handler, LUA_MASKLINE, 0);
 
@@ -70,8 +74,10 @@ extern "C" int start_agent(lua_State *L, int pid) {
 }
 
 extern "C" int stop_agent() {
+    DLOG("stop_agent start %d", g_pid);
     msgctl(g_qid_send, IPC_RMID, 0);
     msgctl(g_qid_recv, IPC_RMID, 0);
+    g_pid = 0;
+    lua_sethook(g_L, 0, LUA_MASKLINE, 0);
     return 0;
 }
-   
