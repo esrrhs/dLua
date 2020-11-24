@@ -66,9 +66,9 @@ struct QueuedMessage {
     char payload[QUEUED_MESSAGE_MSG_LEN + 1];
 };
 
-const int HB_MSG = 0;
+const int HB_MSG = 1;
 
-static int send_msg(int qid, int type, const char *data) {
+static int send_msg(int qid, long type, const char *data) {
     QueuedMessage msg;
     msg.type = type;
     strncpy(msg.payload, data, QUEUED_MESSAGE_MSG_LEN);
@@ -78,6 +78,17 @@ static int send_msg(int qid, int type, const char *data) {
         DERR("send_msg %d %d error %d %s", qid, msgsz, errno, strerror(errno));
         return -1;
     }
+    return 0;
+}
+
+static int recv_msg(int qid, long &type, char data[QUEUED_MESSAGE_MSG_LEN]) {
+    QueuedMessage msg;
+    if (msgrcv(qid, &msg, QUEUED_MESSAGE_MSG_LEN, 0, 0) == -1) {
+        DERR("recv_msg %d error %d %s", qid, errno, strerror(errno));
+        return -1;
+    }
+    strncpy(data, msg.payload, QUEUED_MESSAGE_MSG_LEN);
+    data[QUEUED_MESSAGE_MSG_LEN] = 0;
     return 0;
 }
 
