@@ -128,6 +128,21 @@ int fini_env() {
     return 0;
 }
 
+int process() {
+    DLOG("process start");
+
+    char msg[QUEUED_MESSAGE_MSG_LEN] = {0};
+    long msgtype = 0;
+    while (true) {
+        if (recv_msg(g_qid_recv, msgtype, msg) != 0) {
+            return -1;
+        }
+        DLOG("recv_msg %s", msg);
+    }
+
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         usage();
@@ -156,6 +171,11 @@ int main(int argc, char **argv) {
     g_qid_recv = qid2;
 
     if (init_env() != 0) {
+        DERR("init_env fail");
+        exit(-1);
+    }
+
+    if (process() != 0) {
         DERR("init_env fail");
         exit(-1);
     }
