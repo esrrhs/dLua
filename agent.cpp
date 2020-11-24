@@ -25,15 +25,15 @@ static void hook_handler(lua_State *L, lua_Debug *par) {
 
     ret = lua_getinfo(L, "S", &ar);
     if (ret == 0) {
-        DERR("hook_handler lua_getinfo fail %d", ret);
+        DERR("lua_getinfo fail %d", ret);
         return;
     }
     if (ar.source == 0) {
-        DERR("hook_handler source nil ");
+        DERR("source nil ");
         return;
     }
     if (ar.source[0] != '@') {
-        DERR("hook_handler source error %s ", ar.source);
+        DERR("source error %s ", ar.source);
         return;
     }
 

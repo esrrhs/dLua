@@ -11,12 +11,42 @@ int usage() {
 int init_env(int pid) {
     DLOG("init_env start %d", pid);
 
-//    int out;
-//    char cmd[256] = {0};
-//    snprintf(cmd, sizeof(cmd),"./hookso arg %s liblua.so lua_settop 1");
-//    cmd+=" "+std::to_string(pid);
-//    std::string ret = exec_command("./hookso", out);
+    // get lua state
+    {
+        int out = 0;
+        char cmd[256] = {0};
+        snprintf(cmd, sizeof(cmd), "pstack %d | grep \"in luaV_execute\" | grep \"=0x[0-9abcdef]*\" -o", pid);
+        std::string ret = exec_command(cmd, out);
+        if (out != 0) {
+            DERR("exec_command fail pid %d command %s", pid, cmd);
+            return -1;
+        }
+        ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
+        ret.erase(std::remove(ret.begin(), ret.end(), '='), ret.end());
+        DLOG("exec_command pstack ret %s", ret.c_str());
+        if (ret.length() < 2 || ret.substr(0, 2) != "0x") {
+            DERR("can not find pid %d lua state", pid);
+            return -1;
+        }
+        std::string lstroct = ret.substr(2);
+        long long lvalue = strtoll(lstroct.c_str(), NULL, 16);
+        std::string lstr = std::to_string(lvalue);
+        DLOG("lstr %s", lstr.c_str());
+    }
 
+    // inject so
+    {
+        int out = 0;
+        char cmd[256] = {0};
+        snprintf(cmd, sizeof(cmd), "./hookso dlopen %d ./dluaagent.so", pid);
+        std::string ret = exec_command(cmd, out);
+        if (out != 0) {
+            DERR("exec_command fail pid %d command %s", pid, cmd);
+            return -1;
+        }
+        ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
+        DLOG("exec_command hookso dlopen ret %s", ret.c_str());
+    }
 
     return 0;
 }
