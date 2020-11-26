@@ -67,6 +67,7 @@ struct QueuedMessage {
 };
 
 const int HB_MSG = 1;
+const int LOGIN_MSG = 2;
 
 static int send_msg(int qid, long type, const char *data) {
     QueuedMessage msg;
@@ -83,13 +84,44 @@ static int send_msg(int qid, long type, const char *data) {
 
 static int recv_msg(int qid, long &type, char data[QUEUED_MESSAGE_MSG_LEN]) {
     QueuedMessage msg;
-    if (msgrcv(qid, &msg, QUEUED_MESSAGE_MSG_LEN, 0, 0) == -1) {
+    int size = msgrcv(qid, &msg, QUEUED_MESSAGE_MSG_LEN, 0, IPC_NOWAIT);
+    if (size == -1) {
+        if (errno == ENOMSG) {
+            type = 0;
+            data[0] = 0;
+            return 0;
+        }
         DERR("recv_msg %d error %d %s", qid, errno, strerror(errno));
         return -1;
     }
+    type = msg.type;
     strncpy(data, msg.payload, QUEUED_MESSAGE_MSG_LEN);
-    data[QUEUED_MESSAGE_MSG_LEN] = 0;
+    data[size] = 0;
     return 0;
+}
+
+const int MAX_HB_TIMEOUT_SECONDS = 3;
+
+static int check_send_hb(int qid) {
+    static int last_send_hb_time = time(0);
+    if (time(0) - last_send_hb_time > 0) {
+        last_send_hb_time = time(0);
+        return send_msg(qid, HB_MSG, std::to_string(last_send_hb_time).c_str());
+    }
+    return 0;
+}
+
+static int check_hb_timeout(bool is_update_time, int update_time) {
+    static int last_check_hb_time = time(0);
+    if (is_update_time) {
+        last_check_hb_time = update_time;
+        return 0;
+    } else {
+        if (time(0) - last_check_hb_time > MAX_HB_TIMEOUT_SECONDS) {
+            return 1;
+        }
+        return 0;
+    }
 }
 
 static int open_msg_queue(const char *tmpfilename, int pid) {
