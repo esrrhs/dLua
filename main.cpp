@@ -5,7 +5,8 @@ int g_qid_send;
 int g_pid;
 std::string g_sohandle = "";
 std::string g_lstr = "";
-const int max_find_wait_seconds = 10;
+const int MAX_FIND_WAIT_SECONDS = 10;
+const int MAX_CONN_WAIT_SECONDS = 10;
 
 int usage() {
     printf("dlua: pid\n");
@@ -36,13 +37,64 @@ long long find_luastate() {
     return lvalue;
 }
 
+int fini_env() {
+    DLOG("fini_env start");
+    msgctl(g_qid_send, IPC_RMID, 0);
+    g_qid_send = 0;
+    msgctl(g_qid_recv, IPC_RMID, 0);
+    g_qid_recv = 0;
+
+    // close agent
+    {
+        int out = 0;
+        char cmd[256] = {0};
+        snprintf(cmd, sizeof(cmd), "./hookso call %d dluaagent.so stop_agent i=%s i=%d", g_pid, g_lstr.c_str(), g_pid);
+        std::string ret = exec_command(cmd, out);
+        if (out != 0) {
+            DERR("exec_command fail pid %d command %s", g_pid, cmd);
+            return -1;
+        }
+        ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
+        DLOG("exec_command hookso call ret %s", ret.c_str());
+    }
+
+    // close so
+    {
+        int out = 0;
+        char cmd[256] = {0};
+        snprintf(cmd, sizeof(cmd), "./hookso dlclose %d %s", g_pid, g_sohandle.c_str());
+        std::string ret = exec_command(cmd, out);
+        if (out != 0) {
+            DERR("exec_command fail pid %d command %s", g_pid, cmd);
+            return -1;
+        }
+        ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
+        DLOG("exec_command hookso dlclose ret %s", ret.c_str());
+    }
+
+    return 0;
+}
+
+void int_handler(int sig) {
+    signal(sig, SIG_IGN);
+    printf("Do you really want to quit? [y/n] ");
+    char c = getchar();
+    if (c == 'y' || c == 'Y') {
+        fini_env();
+        exit(0);
+    } else {
+        signal(SIGINT, int_handler);
+    }
+    getchar();
+}
+
 int init_env() {
     DLOG("init_env start %d", g_pid);
 
     // get lua state
     long long lvalue = -1;
     int last = time(0);
-    while (time(0) - last < max_find_wait_seconds) {
+    while (time(0) - last < MAX_FIND_WAIT_SECONDS) {
         lvalue = find_luastate();
         if (lvalue == -1) {
             usleep(100);
@@ -59,6 +111,8 @@ int init_env() {
     std::string lstr = std::to_string(lvalue);
     DLOG("lstr %s", lstr.c_str());
     g_lstr = lstr;
+
+    //signal(SIGINT, int_handler);
 
     // inject so
     {
@@ -92,39 +146,8 @@ int init_env() {
     return 0;
 }
 
-int fini_env() {
-    DLOG("fini_env start");
-    msgctl(g_qid_send, IPC_RMID, 0);
-    msgctl(g_qid_recv, IPC_RMID, 0);
-
-    // close agent
-    {
-        int out = 0;
-        char cmd[256] = {0};
-        snprintf(cmd, sizeof(cmd), "./hookso call %d dluaagent.so stop_agent i=%s i=%d", g_pid, g_lstr.c_str(), g_pid);
-        std::string ret = exec_command(cmd, out);
-        if (out != 0) {
-            DERR("exec_command fail pid %d command %s", g_pid, cmd);
-            return -1;
-        }
-        ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
-        DLOG("exec_command hookso call ret %s", ret.c_str());
-    }
-
-    // close so
-    {
-        int out = 0;
-        char cmd[256] = {0};
-        snprintf(cmd, sizeof(cmd), "./hookso dlclose %d %s", g_pid, g_sohandle.c_str());
-        std::string ret = exec_command(cmd, out);
-        if (out != 0) {
-            DERR("exec_command fail pid %d command %s", g_pid, cmd);
-            return -1;
-        }
-        ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
-        DLOG("exec_command hookso dlclose ret %s", ret.c_str());
-    }
-
+int process_msg(long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
+    // TODO
     return 0;
 }
 
@@ -133,12 +156,60 @@ int process() {
 
     char msg[QUEUED_MESSAGE_MSG_LEN] = {0};
     long msgtype = 0;
-    while (true) {
+
+    bool ini_ok = false;
+    int last_time = time(0);
+    while (time(0) - last_time < MAX_CONN_WAIT_SECONDS) {
         if (recv_msg(g_qid_recv, msgtype, msg) != 0) {
-            return -1;
+            break;
         }
-        DLOG("recv_msg %s", msg);
+
+        if (msgtype == LOGIN_MSG) {
+            if (std::to_string(g_pid) == std::string(msg)) {
+                ini_ok = true;
+                break;
+            }
+        }
     }
+
+    if (!ini_ok) {
+        DERR("can not connect agent %d", g_pid);
+        return -1;
+    }
+
+    DLOG("connect ok %d", g_pid);
+
+    while (1) {
+        if (check_send_hb(g_qid_send) != 0) {
+            DERR("check_send_hb fail");
+            break;
+        }
+
+        if (check_hb_timeout(false, 0) != 0) {
+            DERR("check_hb_timeout fail");
+            break;
+        }
+
+        if (recv_msg(g_qid_recv, msgtype, msg) != 0) {
+            DERR("recv_msg fail");
+            break;
+        }
+
+        DLOG("recv_msg %s", msg);
+
+        if (msgtype == 0) {
+            continue;
+        } else if (msgtype == HB_MSG) {
+            check_hb_timeout(true, time(0));
+        } else {
+            if (process_msg(msgtype, msg) != 0) {
+                DERR("process_msg fail");
+                break;
+            }
+        }
+    }
+
+    DLOG("disconnect from %d", g_pid);
 
     return 0;
 }
