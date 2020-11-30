@@ -36,7 +36,7 @@
 const int open_debug = 1;
 
 #define DLOG(...) if (open_debug) {dlog(stdout, "[DEBUG] ", __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__);}
-#define DERR(...) if (open_debug) {dlog(stderr, "[ERROR] ", __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__);}
+#define DERR(...)  {dlog(stderr, "[ERROR] ", __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__);}
 
 void dlog(FILE *fd, const char *header, const char *file, const char *func, int pos, const char *fmt, ...) {
     time_t clock1;
@@ -66,8 +66,7 @@ struct QueuedMessage {
     char payload[QUEUED_MESSAGE_MSG_LEN + 1];
 };
 
-const int HB_MSG = 1;
-const int LOGIN_MSG = 2;
+const int LOGIN_MSG = 1;
 
 static int send_msg(int qid, long type, const char *data) {
     QueuedMessage msg;
@@ -98,30 +97,6 @@ static int recv_msg(int qid, long &type, char data[QUEUED_MESSAGE_MSG_LEN]) {
     strncpy(data, msg.payload, QUEUED_MESSAGE_MSG_LEN);
     data[size] = 0;
     return 0;
-}
-
-const int MAX_HB_TIMEOUT_SECONDS = 3;
-
-static int check_send_hb(int qid) {
-    static int last_send_hb_time = time(0);
-    if (time(0) - last_send_hb_time > 0) {
-        last_send_hb_time = time(0);
-        return send_msg(qid, HB_MSG, std::to_string(last_send_hb_time).c_str());
-    }
-    return 0;
-}
-
-static int check_hb_timeout(bool is_update_time, int update_time) {
-    static int last_check_hb_time = time(0);
-    if (is_update_time) {
-        last_check_hb_time = update_time;
-        return 0;
-    } else {
-        if (time(0) - last_check_hb_time > MAX_HB_TIMEOUT_SECONDS) {
-            return 1;
-        }
-        return 0;
-    }
 }
 
 static int open_msg_queue(const char *tmpfilename, int pid) {

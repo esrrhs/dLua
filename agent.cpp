@@ -50,7 +50,6 @@ int ini_agent() {
     g_qid_recv = qid1;
 
     send_msg(g_qid_send, LOGIN_MSG, std::to_string(g_pid).c_str());
-    check_hb_timeout(true, time(0));
 
     DLOG("ini_agent ok %d", g_pid);
 
@@ -94,18 +93,6 @@ void hook_handler(lua_State *L, lua_Debug *par) {
         return;
     }
 
-    if (check_send_hb(g_qid_send) != 0) {
-        DERR("check_send_hb fail");
-        stop_agent();
-        return;
-    }
-
-    if (check_hb_timeout(false, 0) != 0) {
-        DERR("check_hb_timeout fail");
-        stop_agent();
-        return;
-    }
-
     lua_Debug ar;
     ar.source = 0;
     int ret = lua_getstack(L, 0, &ar);
@@ -126,8 +113,6 @@ void hook_handler(lua_State *L, lua_Debug *par) {
 
         if (msgtype == 0) {
             break;
-        } else if (msgtype == HB_MSG) {
-            check_hb_timeout(true, time(0));
         } else {
             if (process_msg(L, &ar, msgtype, msg) != 0) {
                 DERR("process_msg fail");
