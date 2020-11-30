@@ -35,6 +35,7 @@ std::string g_step_last_file = "";
 std::string g_step_last_func = "";
 int g_step_last_line;
 int g_step_last_level;
+int g_step_debug_level;
 
 extern "C" int stop_agent() {
 
@@ -44,6 +45,48 @@ extern "C" int stop_agent() {
     g_opening = RUNNING_STATE_END;
 
     return 0;
+}
+
+std::string get_file_code(std::string filename, int lineno) {
+    FILE *fp = fopen(filename.c_str(), "r");
+    if (fp == NULL) {
+        return "";
+    }
+
+    char *line = NULL;
+    size_t len = 0;
+    int index = 1;
+    std::string ret = "";
+    while ((getline(&line, &len, fp)) != -1) {
+        if (lineno == index) {
+            ret = line;
+            break;
+        }
+        index++;
+    }
+    fclose(fp);
+    if (line) {
+        free(line);
+    }
+    ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
+    return ret;
+}
+
+int lastlevel(lua_State *L) {
+    lua_Debug ar;
+    int li = 1, le = 1;
+    /* find an upper bound */
+    while (lua_getstack(L, le, &ar)) {
+        li = le;
+        le *= 2;
+    }
+    /* do a binary search */
+    while (li < le) {
+        int m = (li + le) / 2;
+        if (lua_getstack(L, m, &ar)) li = m + 1;
+        else le = m;
+    }
+    return le - 1;
 }
 
 int ini_agent() {
@@ -71,6 +114,11 @@ int ini_agent() {
     g_step = 0;
     g_step_next = 0;
     g_step_next_in = 0;
+    g_step_last_file = "";
+    g_step_last_func = "";
+    g_step_last_line = 0;
+    g_step_last_level = 0;
+    g_step_debug_level = 0;
 
     DLOG("ini_agent ok %d", g_pid);
 
@@ -96,13 +144,17 @@ int process_help_command() {
                       "s\tstep into next line\n"
                       "c\tcontinue run\n"
                       "dis\tdisable breakpoint, eg: dis 1\n"
-                      "en\tenable breakpoint, eg: en 1\n";
+                      "en\tenable breakpoint, eg: en 1\n"
+                      "p\tprint exp value, eg: p _G.xxx\n"
+                      "l\tlist code\n"
+                      "f\tselect stack frame\n";
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
     return 0;
 }
 
 int process_bt_command(lua_State *L) {
     lua_Debug entry;
+    memset(&entry, 0, sizeof(entry));
     int depth = 0;
     char buff[128] = {0};
     std::string ret = "";
@@ -131,7 +183,8 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result) {
     if (result.size() < 2) {
         if (g_step != 0) {
             lua_Debug entry;
-            if (lua_getstack(L, 0, &entry) <= 0) {
+            memset(&entry, 0, sizeof(entry));
+            if (lua_getstack(L, g_step_debug_level, &entry) <= 0) {
                 return 0;
             }
             int status = lua_getinfo(L, "Sln", &entry);
@@ -224,6 +277,9 @@ int process_i_command(lua_State *L, const std::vector <std::string> &result) {
         }
         DLOG("process_i_command b %s", ret.c_str());
         send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    } else {
+        send_msg(g_qid_send, SHOW_MSG, "param not support\n");
+        return 0;
     }
 
     return 0;
@@ -247,6 +303,11 @@ int process_c_command(lua_State *L) {
     g_step = 0;
     g_step_next = 0;
     g_step_next_in = 0;
+    g_step_last_file = "";
+    g_step_last_func = "";
+    g_step_last_line = 0;
+    g_step_last_level = 0;
+    g_step_debug_level = 0;
     return 0;
 }
 
@@ -296,6 +357,219 @@ int process_en_command(lua_State *L, const std::vector <std::string> &result) {
     return 0;
 }
 
+int process_p_command(lua_State *L, const std::vector <std::string> &result) {
+    if (result.size() < 2) {
+        send_msg(g_qid_send, SHOW_MSG, "print need param\n");
+        return 0;
+    }
+
+    if (g_step == 0) {
+        send_msg(g_qid_send, SHOW_MSG, "need in step mode\n");
+        return 0;
+    }
+
+    std::string param = result[1];
+
+    lua_Debug entry;
+    memset(&entry, 0, sizeof(entry));
+    if (lua_getstack(L, g_step_debug_level, &entry) <= 0) {
+        return 0;
+    }
+    int status = lua_getinfo(L, "Sln", &entry);
+    if (status <= 0) {
+        return 0;
+    }
+
+    int oldn = lua_gettop(L);
+
+    const char *loadstr = "function dlua_tprint (tbl, indent, visit, path)\n"
+                          "    if not indent then\n"
+                          "        indent = 0\n"
+                          "    end\n"
+                          "    local ret = \"\"\n"
+                          "    for k, v in pairs(tbl) do\n"
+                          "        local formatting = string.rep(\"  \", indent) .. k .. \": \"\n"
+                          "        if type(v) == \"table\" then\n"
+                          "            if visit[v] then\n"
+                          "                ret = ret .. formatting .. \"*Recursion at \" .. visit[v] .. \"*\\n\"\n"
+                          "            else\n"
+                          "                visit[v] = path .. \"/\" .. tostring(k)\n"
+                          "                ret = ret .. formatting .. \"\\n\" .. dlua_tprint(v, indent + 1, visit, path .. \"/\" .. tostring(k))\n"
+                          "            end\n"
+                          "        elseif type(v) == 'boolean' then\n"
+                          "            ret = ret .. formatting .. tostring(v) .. \"\\n\"\n"
+                          "        elseif type(v) == 'string' then\n"
+                          "            ret = ret .. formatting .. \"'\" .. tostring(v) .. \"'\" .. \"\\n\"\n"
+                          "        else\n"
+                          "            ret = ret .. formatting .. v .. \"\\n\"\n"
+                          "        end\n"
+                          "    end\n"
+                          "    return ret\n"
+                          "end\n"
+                          "\n"
+                          "function dlua_pprint (tbl)\n"
+                          "    local path = \"\"\n"
+                          "    local visit = {}\n"
+                          "    if type(tbl) ~= \"table\" then\n"
+                          "        return tostring(tbl)\n"
+                          "    end\n"
+                          "    return dlua_tprint(tbl, 0, visit, path)\n"
+                          "end\n"
+                          "return _G.dlua_pprint(\"ok\")";
+
+    luaL_dostring(L, loadstr);
+    std::string ret = lua_tostring(L, -1);
+    lua_settop(L, oldn);
+    DLOG("luaL_dostring ret %s", ret.c_str());
+    lua_getglobal(L, "dlua_pprint");
+    if (!lua_isfunction(L, -1)) {
+        send_msg(g_qid_send, SHOW_MSG, "get _G.dlua_pprint fail\n");
+        return 0;
+    }
+
+    bool find = false;
+    int index = 1;
+    while (1) {
+        const char *name = lua_getlocal(L, &entry, index);
+        if (!name) {
+            break;
+        }
+        if (param == name) {
+            find = true;
+            DLOG("find local %s", name);
+            break;
+        } else {
+            lua_pop(L, 1);
+        }
+        index++;
+    }
+
+    if (!find) {
+        index = 1;
+        while (1) {
+            const char *name = lua_getupvalue(L, -1, index);
+            if (!name) {
+                break;
+            }
+            if (param == name) {
+                find = true;
+                DLOG("find upvalue %s", name);
+                break;
+            } else {
+                lua_pop(L, 1);
+            }
+            index++;
+        }
+    }
+
+    if (!find) {
+        std::string tmp = "return dlua_pprint(" + param + ")";
+        luaL_dostring(L, tmp.c_str());
+        DLOG("call dlua_pprint %s", param.c_str());
+    } else {
+        lua_pcall(L, 1, 1, 0);
+    }
+
+    int newn = lua_gettop(L);
+    if (newn > oldn) {
+        std::string ret = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    }
+    lua_settop(L, oldn);
+
+    return 0;
+}
+
+int process_l_command(lua_State *L) {
+    if (g_step == 0) {
+        send_msg(g_qid_send, SHOW_MSG, "need in step mode\n");
+        return 0;
+    }
+
+    lua_Debug entry;
+    memset(&entry, 0, sizeof(entry));
+    if (lua_getstack(L, g_step_debug_level, &entry) <= 0) {
+        return 0;
+    }
+    int status = lua_getinfo(L, "Sln", &entry);
+    if (status <= 0) {
+        return 0;
+    }
+    std::string file = entry.short_src;
+    std::string linestr = std::to_string(entry.currentline);
+    int curline = atoi(linestr.c_str());
+
+    for (int i = -5; i <= 5; ++i) {
+        int line = i + curline;
+        if (curline <= 0) {
+            continue;
+        }
+        std::string code = get_file_code(file, line);
+        if (code == "") {
+            continue;
+        }
+        std::string ret;
+        char buff[128] = {0};
+        snprintf(buff, sizeof(buff) - 1, "%d %s\n", line, code.c_str());
+        ret = buff;
+        send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    }
+
+    return 0;
+}
+
+int process_f_command(lua_State *L, const std::vector <std::string> &result) {
+    if (result.size() < 2) {
+        send_msg(g_qid_send, SHOW_MSG, "frame need param\n");
+        return 0;
+    }
+
+    if (g_step == 0) {
+        send_msg(g_qid_send, SHOW_MSG, "need in step mode\n");
+        return 0;
+    }
+
+    int frame = atoi(result[1].c_str());
+
+    lua_Debug entry;
+    memset(&entry, 0, sizeof(entry));
+    if (lua_getstack(L, frame, &entry) <= 0) {
+        char buff[128] = {0};
+        snprintf(buff, sizeof(buff) - 1, "frame set fail %d\n", frame);
+        std::string ret = buff;
+        send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    } else {
+        int status = lua_getinfo(L, "Sln", &entry);
+        if (status <= 0) {
+            char buff[128] = {0};
+            snprintf(buff, sizeof(buff) - 1, "frame set fail %d\n", frame);
+            std::string ret = buff;
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+        } else {
+            g_step_debug_level = frame;
+
+            // #0  usage () at main.cpp:16
+            char buff[128] = {0};
+            std::string curfunc = entry.name ? entry.name : "?";
+            std::string curfile = entry.short_src;
+            int curline = entry.currentline;
+            snprintf(buff, sizeof(buff) - 1, "#%d %s at %s:%d\n", frame, curfunc.c_str(), curfile.c_str(), curline);
+            std::string ret = buff;
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+
+            // 16          printf("dlua: pid\n");
+            std::string code = get_file_code(curfile, curline);
+            memset(buff, 0, sizeof(buff));
+            snprintf(buff, sizeof(buff) - 1, "%d %s\n", curline, code.c_str());
+            ret = buff;
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+        }
+    }
+
+    return 0;
+}
+
 int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
     std::string command = data;
     if (command == "") {
@@ -330,6 +604,12 @@ int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) 
         ret = process_dis_command(L, result);
     } else if (token == "en") {
         ret = process_en_command(L, result);
+    } else if (token == "p") {
+        ret = process_p_command(L, result);
+    } else if (token == "l") {
+        ret = process_l_command(L);
+    } else if (token == "f") {
+        ret = process_f_command(L, result);
     }
 
     if (g_step != 0 && g_step_next_in == 0 && g_step_next == 0) {
@@ -366,49 +646,9 @@ int loop_recv(lua_State *L) {
     return 0;
 }
 
-std::string get_file_code(std::string filename, int lineno) {
-    FILE *fp = fopen(filename.c_str(), "r");
-    if (fp == NULL) {
-        return "open fail";
-    }
-
-    char *line = NULL;
-    size_t len = 0;
-    int index = 1;
-    std::string ret = "end of file";
-    while ((getline(&line, &len, fp)) != -1) {
-        if (lineno == index) {
-            ret = line;
-            break;
-        }
-        index++;
-    }
-    fclose(fp);
-    if (line) {
-        free(line);
-    }
-    return ret;
-}
-
-int lastlevel(lua_State *L) {
-    lua_Debug ar;
-    int li = 1, le = 1;
-    /* find an upper bound */
-    while (lua_getstack(L, le, &ar)) {
-        li = le;
-        le *= 2;
-    }
-    /* do a binary search */
-    while (li < le) {
-        int m = (li + le) / 2;
-        if (lua_getstack(L, m, &ar)) li = m + 1;
-        else le = m;
-    }
-    return le - 1;
-}
-
 int check_bp(lua_State *L) {
     lua_Debug entry;
+    memset(&entry, 0, sizeof(entry));
     if (lua_getstack(L, 0, &entry) <= 0) {
         return 0;
     }
