@@ -69,6 +69,7 @@ struct QueuedMessage {
 const int LOGIN_MSG = 1;
 const int COMMAND_MSG = 2;
 const int SHOW_MSG = 3;
+const int INPUT_MSG = 4;
 
 static int send_msg(int qid, long type, const char *data) {
     QueuedMessage msg;
