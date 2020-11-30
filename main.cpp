@@ -7,6 +7,7 @@ std::string g_sohandle = "";
 std::string g_lstr = "";
 const int MAX_FIND_WAIT_SECONDS = 10;
 const int MAX_CONN_WAIT_SECONDS = 10;
+int g_quit;
 
 int usage() {
     printf("dlua: pid\n");
@@ -80,8 +81,7 @@ void int_handler(int sig) {
     printf("Do you really want to quit? [y/n] ");
     char c = getchar();
     if (c == 'y' || c == 'Y') {
-        fini_env();
-        exit(0);
+        g_quit = 1;
     } else {
         signal(SIGINT, int_handler);
     }
@@ -112,7 +112,7 @@ int init_env() {
     DLOG("lstr %s", lstr.c_str());
     g_lstr = lstr;
 
-    //signal(SIGINT, int_handler);
+    signal(SIGINT, int_handler);
 
     // inject so
     {
@@ -179,7 +179,7 @@ int process() {
 
     DLOG("connect ok %d", g_pid);
 
-    while (1) {
+    while (g_quit != 1) {
         if (check_send_hb(g_qid_send) != 0) {
             DERR("check_send_hb fail");
             break;
@@ -195,13 +195,13 @@ int process() {
             break;
         }
 
-        DLOG("recv_msg %s", msg);
-
         if (msgtype == 0) {
             continue;
         } else if (msgtype == HB_MSG) {
             check_hb_timeout(true, time(0));
         } else {
+            DLOG("recv_msg %s", msg);
+
             if (process_msg(msgtype, msg) != 0) {
                 DERR("process_msg fail");
                 break;
