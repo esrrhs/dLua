@@ -143,12 +143,14 @@ int init_env() {
 }
 
 int process_msg(long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
-    // TODO
+    if (type == SHOW_MSG) {
+        printf(data);
+    }
     return 0;
 }
 
 int get_command() {
-    printf("\ninput your command: ");
+    printf("\n(dlua) ");
     std::getline(std::cin, g_command);
     return 0;
 }
@@ -168,12 +170,18 @@ int process_command() {
     std::string token = result[0];
     DLOG("command begin %s", token.c_str());
 
-    if (token == "help" || token == "h") {
-        printf("h/help\thelp commands\n"
-               "quit/q\tquit");
-    } else if (token == "quit" || token == "q") {
+    if (token == "h") {
+        printf("h\thelp commands\n"
+               "q\tquit\n"
+               "bt\tshow cur call stack\n"
+        );
+    } else if (token == "q") {
         g_quit = 1;
+    } else {
+        send_msg(g_qid_send, COMMAND_MSG, g_command.c_str());
     }
+
+    g_command = "";
 
     return 0;
 }
@@ -221,8 +229,6 @@ int process() {
         if (msgtype == 0) {
             continue;
         } else {
-            DLOG("recv_msg %s", msg);
-
             if (process_msg(msgtype, msg) != 0) {
                 DERR("process_msg fail");
                 break;

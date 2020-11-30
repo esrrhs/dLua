@@ -65,8 +65,54 @@ int fini_agent() {
     return 0;
 }
 
+int process_bt_command(lua_State *L, lua_Debug *ar) {
+    lua_Debug entry;
+    int depth = 0;
+    char buff[128] = {0};
+    std::string ret = "";
+    while (lua_getstack(L, depth, &entry)) {
+        int status = lua_getinfo(L, "Sln", &entry);
+        if (status <= 0) {
+            break;
+        }
+
+        // #0  0x00007f772b7abe30 in __nanosleep_nocancel () from /lib64/libpthread.so.0
+        memset(buff, 0, sizeof(buff));
+        snprintf(buff, sizeof(buff) - 1, "%d in %s at %s:%d\n", depth, entry.name ? entry.name : "?", entry.short_src,
+                 entry.currentline);
+        ret = ret + buff;
+        depth++;
+    }
+    DLOG("process_bt_command %s", ret.c_str());
+    send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    return 0;
+}
+
+int process_command(lua_State *L, lua_Debug *ar, long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
+    std::string command = data;
+    if (command == "") {
+        return 0;
+    }
+    std::vector <std::string> result;
+    std::istringstream iss(command);
+    for (std::string s; iss >> s;) {
+        result.push_back(s);
+    }
+    if (result.empty()) {
+        return 0;
+    }
+    std::string token = result[0];
+
+    if (token == "bt") {
+        return process_bt_command(L, ar);
+    }
+    return 0;
+}
+
 int process_msg(lua_State *L, lua_Debug *ar, long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
-    // TODO
+    if (type == COMMAND_MSG) {
+        return process_command(L, ar, type, data);
+    }
     return 0;
 }
 
