@@ -60,13 +60,15 @@ void dlog(FILE *fd, const char *header, const char *file, const char *func, int 
     va_end(ap);
 }
 
-const int QUEUED_MESSAGE_MSG_LEN = 127;
+const int QUEUED_MESSAGE_MSG_LEN = 1023;
 struct QueuedMessage {
     long type;
     char payload[QUEUED_MESSAGE_MSG_LEN + 1];
 };
 
 const int LOGIN_MSG = 1;
+const int COMMAND_MSG = 2;
+const int SHOW_MSG = 3;
 
 static int send_msg(int qid, long type, const char *data) {
     QueuedMessage msg;
