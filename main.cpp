@@ -9,6 +9,7 @@ const int MAX_FIND_WAIT_SECONDS = 10;
 const int MAX_CONN_WAIT_SECONDS = 10;
 int g_int;
 std::string g_command = "";
+std::string g_last_command = "";
 int g_quit;
 
 int usage() {
@@ -145,6 +146,8 @@ int init_env() {
 int process_msg(long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
     if (type == SHOW_MSG) {
         printf(data);
+    } else if (type == INPUT_MSG) {
+        g_int = 1;
     }
     return 0;
 }
@@ -152,6 +155,11 @@ int process_msg(long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
 int get_command() {
     printf("\n(dlua) ");
     std::getline(std::cin, g_command);
+    if (g_command.size() == 0) {
+        g_command = g_last_command;
+        return 0;
+    }
+    g_last_command = g_command;
     return 0;
 }
 

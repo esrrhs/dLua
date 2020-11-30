@@ -28,6 +28,13 @@ int g_old_hook_mask;
 int g_old_hook_count;
 int g_opening;
 std::vector <BreakPoint> g_blist;
+int g_step;
+int g_step_next;
+int g_step_next_in;
+std::string g_step_last_file = "";
+std::string g_step_last_func = "";
+int g_step_last_line;
+int g_step_last_level;
 
 extern "C" int stop_agent() {
 
@@ -61,6 +68,9 @@ int ini_agent() {
     send_msg(g_qid_send, LOGIN_MSG, std::to_string(g_pid).c_str());
 
     g_blist.clear();
+    g_step = 0;
+    g_step_next = 0;
+    g_step_next_in = 0;
 
     DLOG("ini_agent ok %d", g_pid);
 
@@ -81,12 +91,15 @@ int process_help_command() {
                       "q\tquit\n"
                       "bt\tshow cur call stack\n"
                       "b\tadd breakpoint, eg: b test.lua:123\n"
-                      "i\tshow info, eg: i b\n";
+                      "i\tshow info, eg: i b\n"
+                      "n\tstep next line\n"
+                      "s\tstep into next line\n"
+                      "c\tcontinue run\n";
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
     return 0;
 }
 
-int process_bt_command(lua_State *L, lua_Debug *ar) {
+int process_bt_command(lua_State *L) {
     lua_Debug entry;
     int depth = 0;
     char buff[128] = {0};
@@ -109,7 +122,7 @@ int process_bt_command(lua_State *L, lua_Debug *ar) {
     return 0;
 }
 
-int process_b_command(lua_State *L, lua_Debug *ar, const std::vector <std::string> &result) {
+int process_b_command(lua_State *L, const std::vector <std::string> &result) {
     if (result.size() < 2) {
         send_msg(g_qid_send, SHOW_MSG, "breakpoint need file:line\n");
         return 0;
@@ -172,7 +185,7 @@ int process_b_command(lua_State *L, lua_Debug *ar, const std::vector <std::strin
     return 0;
 }
 
-int process_i_command(lua_State *L, lua_Debug *ar, const std::vector <std::string> &result) {
+int process_i_command(lua_State *L, const std::vector <std::string> &result) {
     if (result.size() < 2) {
         send_msg(g_qid_send, SHOW_MSG, "info need param\n");
         return 0;
@@ -197,7 +210,28 @@ int process_i_command(lua_State *L, lua_Debug *ar, const std::vector <std::strin
     return 0;
 }
 
-int process_command(lua_State *L, lua_Debug *ar, long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
+int process_n_command(lua_State *L) {
+    if (g_step != 0) {
+        g_step_next = 1;
+    }
+    return 0;
+}
+
+int process_s_command(lua_State *L) {
+    if (g_step != 0) {
+        g_step_next_in = 1;
+    }
+    return 0;
+}
+
+int process_c_command(lua_State *L) {
+    g_step = 0;
+    g_step_next = 0;
+    g_step_next_in = 0;
+    return 0;
+}
+
+int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
     std::string command = data;
     if (command == "") {
         return 0;
@@ -211,23 +245,194 @@ int process_command(lua_State *L, lua_Debug *ar, long type, char data[QUEUED_MES
         return 0;
     }
     std::string token = result[0];
+    int ret = 0;
 
     if (token == "h") {
-        return process_help_command();
+        ret = process_help_command();
     } else if (token == "bt") {
-        return process_bt_command(L, ar);
+        ret = process_bt_command(L);
     } else if (token == "b") {
-        return process_b_command(L, ar, result);
+        ret = process_b_command(L, result);
     } else if (token == "i") {
-        return process_i_command(L, ar, result);
+        ret = process_i_command(L, result);
+    } else if (token == "n") {
+        ret = process_n_command(L);
+    } else if (token == "s") {
+        ret = process_s_command(L);
+    } else if (token == "c") {
+        ret = process_c_command(L);
+    }
+
+    if (g_step != 0 && g_step_next_in == 0 && g_step_next == 0) {
+        send_msg(g_qid_send, INPUT_MSG, "");
+    }
+
+    return ret;
+}
+
+int process_msg(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
+    if (type == COMMAND_MSG) {
+        return process_command(L, type, data);
     }
     return 0;
 }
 
-int process_msg(lua_State *L, lua_Debug *ar, long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
-    if (type == COMMAND_MSG) {
-        return process_command(L, ar, type, data);
+int loop_recv(lua_State *L) {
+    char msg[QUEUED_MESSAGE_MSG_LEN] = {0};
+    long msgtype = 0;
+
+    while (1) {
+        if (recv_msg(g_qid_recv, msgtype, msg) != 0) {
+            return -1;
+        }
+
+        if (msgtype == 0) {
+            break;
+        } else {
+            if (process_msg(L, msgtype, msg) != 0) {
+                return -1;
+            }
+        }
     }
+    return 0;
+}
+
+std::string get_file_code(std::string filename, int lineno) {
+    FILE *fp = fopen(filename.c_str(), "r");
+    if (fp == NULL) {
+        return "open fail";
+    }
+
+    char *line = NULL;
+    size_t len = 0;
+    int index = 1;
+    std::string ret = "end of file";
+    while ((getline(&line, &len, fp)) != -1) {
+        if (lineno == index) {
+            ret = line;
+            break;
+        }
+        index++;
+    }
+    fclose(fp);
+    if (line) {
+        free(line);
+    }
+    return ret;
+}
+
+int lastlevel(lua_State *L) {
+    lua_Debug ar;
+    int li = 1, le = 1;
+    /* find an upper bound */
+    while (lua_getstack(L, le, &ar)) {
+        li = le;
+        le *= 2;
+    }
+    /* do a binary search */
+    while (li < le) {
+        int m = (li + le) / 2;
+        if (lua_getstack(L, m, &ar)) li = m + 1;
+        else le = m;
+    }
+    return le - 1;
+}
+
+int check_bp(lua_State *L) {
+    lua_Debug entry;
+    if (lua_getstack(L, 0, &entry) <= 0) {
+        return 0;
+    }
+    int status = lua_getinfo(L, "Sln", &entry);
+    if (status <= 0) {
+        return 0;
+    }
+    std::string curfile = entry.short_src;
+    int curline = entry.currentline;
+
+    int bindex = -1;
+
+    for (int i = 0; i < g_blist.size(); ++i) {
+        if (g_blist[i].en && g_blist[i].file == curfile && g_blist[i].line == curline) {
+            g_blist[i].hit++;
+            bindex = i;
+            g_step = 1;
+            break;
+        }
+    }
+
+    std::string curfunc = entry.name ? entry.name : "?";
+    int curlevel = lastlevel(L);
+
+    if (bindex != -1) {
+        // Breakpoint 1, lua_pcallk (L=0x7f772b029008, nargs=2, nresults=1, errfunc=<optimized out>, ctx=0, k=0x0) at lapi.c:968
+        std::string ret;
+        char buff[128] = {0};
+        snprintf(buff, sizeof(buff) - 1, "Breakpoint %d, %s at %s:%d\n", g_blist[bindex].no, curfunc.c_str(),
+                 g_blist[bindex].file.c_str(), g_blist[bindex].line);
+        ret = buff;
+        send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    }
+
+    if (g_step == 1) {
+        bool need_stop = false;
+
+        if (g_step_next == 0 && g_step_next_in == 0) {
+            need_stop = true;
+        } else if (g_step_next != 0) {
+            if (curlevel > g_step_last_level || (curfile == g_step_last_file && curline == g_step_last_line)) {
+            } else {
+                need_stop = true;
+            }
+        } else if (g_step_next_in != 0) {
+            if (curfile == g_step_last_file && curline == g_step_last_line) {
+            } else {
+                need_stop = true;
+            }
+        }
+
+        if (need_stop) {
+
+            if (curfunc != g_step_last_func) {
+                // usage () at main.cpp:15
+                std::string ret;
+                char buff[128] = {0};
+                snprintf(buff, sizeof(buff) - 1, "%s at %s:%d\n", curfunc.c_str(), curfile.c_str(), curline);
+                ret = buff;
+                send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+            }
+
+            // 968     in lapi.c
+            std::string ret;
+            char buff[128] = {0};
+            std::string code = get_file_code(curfile, curline);
+            snprintf(buff, sizeof(buff) - 1, "%d %s\n", curline, code.c_str());
+            ret = buff;
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+
+            g_step_last_file = curfile;
+            g_step_last_line = curline;
+            g_step_last_func = curfunc;
+            g_step_last_level = curlevel;
+
+            g_step_next = 0;
+            g_step_next_in = 0;
+            send_msg(g_qid_send, INPUT_MSG, "");
+
+            while (1) {
+                if (loop_recv(L) != 0) {
+                    DERR("loop_recv fail");
+                    stop_agent();
+                    return -1;
+                }
+                if (g_step == 0 || g_step_next != 0 || g_step_next_in != 0 || g_opening != RUNNING_STATE_RUNNING) {
+                    break;
+                }
+                usleep(100);
+            }
+        }
+    }
+
     return 0;
 }
 
@@ -254,54 +459,17 @@ void hook_handler(lua_State *L, lua_Debug *par) {
         return;
     }
 
-    lua_Debug ar;
-    ar.source = 0;
-    int ret = lua_getstack(L, 0, &ar);
-    if (ret == 0) {
-        DERR("lua_getstack fail %d", ret);
+    if (loop_recv(L) != 0) {
+        DERR("loop_recv fail");
+        stop_agent();
         return;
     }
 
-    char msg[QUEUED_MESSAGE_MSG_LEN] = {0};
-    long msgtype = 0;
-
-    while (1) {
-        if (recv_msg(g_qid_recv, msgtype, msg) != 0) {
-            DERR("recv_msg fail");
-            stop_agent();
-            return;
-        }
-
-        if (msgtype == 0) {
-            break;
-        } else {
-            if (process_msg(L, &ar, msgtype, msg) != 0) {
-                DERR("process_msg fail");
-                stop_agent();
-                return;
-            }
-        }
-    }
-
-    ret = lua_getinfo(L, "S", &ar);
-    if (ret == 0) {
-        DERR("lua_getinfo fail %d", ret);
+    if (check_bp(L) != 0) {
+        DERR("check_bp fail");
+        stop_agent();
         return;
     }
-    if (ar.source == 0) {
-        DERR("source nil ");
-        return;
-    }
-    if (ar.source[0] != '@') {
-        DERR("source error %s ", ar.source);
-        return;
-    }
-
-    char buff[128] = {0};
-    snprintf(buff, sizeof(buff) - 1, "%d", par->currentline);
-    std::string d = ar.source;
-    d = d + ":";
-    d = d + buff;
 }
 
 extern "C" int start_agent(lua_State *L, int pid) {
