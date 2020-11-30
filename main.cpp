@@ -7,6 +7,8 @@ std::string g_sohandle = "";
 std::string g_lstr = "";
 const int MAX_FIND_WAIT_SECONDS = 10;
 const int MAX_CONN_WAIT_SECONDS = 10;
+int g_int;
+std::string g_command = "";
 int g_quit;
 
 int usage() {
@@ -78,14 +80,8 @@ int fini_env() {
 
 void int_handler(int sig) {
     signal(sig, SIG_IGN);
-    printf("Do you really want to quit? [y/n] ");
-    char c = getchar();
-    if (c == 'y' || c == 'Y') {
-        g_quit = 1;
-    } else {
-        signal(SIGINT, int_handler);
-    }
-    getchar();
+    g_int = 1;
+    signal(SIGINT, int_handler);
 }
 
 int init_env() {
@@ -151,6 +147,37 @@ int process_msg(long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
     return 0;
 }
 
+int get_command() {
+    printf("\ninput your command: ");
+    std::getline(std::cin, g_command);
+    return 0;
+}
+
+int process_command() {
+    if (g_command == "") {
+        return 0;
+    }
+    std::vector <std::string> result;
+    std::istringstream iss(g_command);
+    for (std::string s; iss >> s;) {
+        result.push_back(s);
+    }
+    if (result.empty()) {
+        return 0;
+    }
+    std::string token = result[0];
+    DLOG("command begin %s", token.c_str());
+
+    if (token == "help" || token == "h") {
+        printf("h/help\thelp commands\n"
+               "quit/q\tquit");
+    } else if (token == "quit" || token == "q") {
+        g_quit = 1;
+    }
+
+    return 0;
+}
+
 int process() {
     DLOG("process start");
 
@@ -180,14 +207,10 @@ int process() {
     DLOG("connect ok %d", g_pid);
 
     while (g_quit != 1) {
-        if (check_send_hb(g_qid_send) != 0) {
-            DERR("check_send_hb fail");
-            break;
-        }
-
-        if (check_hb_timeout(false, 0) != 0) {
-            DERR("check_hb_timeout fail");
-            break;
+        if (g_int != 0) {
+            g_int = 0;
+            get_command();
+            process_command();
         }
 
         if (recv_msg(g_qid_recv, msgtype, msg) != 0) {
@@ -197,8 +220,6 @@ int process() {
 
         if (msgtype == 0) {
             continue;
-        } else if (msgtype == HB_MSG) {
-            check_hb_timeout(true, time(0));
         } else {
             DLOG("recv_msg %s", msg);
 
