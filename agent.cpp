@@ -94,7 +94,9 @@ int process_help_command() {
                       "i\tshow info, eg: i b\n"
                       "n\tstep next line\n"
                       "s\tstep into next line\n"
-                      "c\tcontinue run\n";
+                      "c\tcontinue run\n"
+                      "dis\tdisable breakpoint, eg: dis 1\n"
+                      "en\tenable breakpoint, eg: en 1\n";
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
     return 0;
 }
@@ -123,30 +125,47 @@ int process_bt_command(lua_State *L) {
 }
 
 int process_b_command(lua_State *L, const std::vector <std::string> &result) {
+    std::string file;
+    std::string linestr;
+
     if (result.size() < 2) {
-        send_msg(g_qid_send, SHOW_MSG, "breakpoint need file:line\n");
-        return 0;
-    }
-    std::string bpos = result[1];
-    DLOG("process_b_command start %s", bpos.c_str());
+        if (g_step != 0) {
+            lua_Debug entry;
+            if (lua_getstack(L, 0, &entry) <= 0) {
+                return 0;
+            }
+            int status = lua_getinfo(L, "Sln", &entry);
+            if (status <= 0) {
+                return 0;
+            }
+            file = entry.short_src;
+            linestr = std::to_string(entry.currentline);
+        } else {
+            send_msg(g_qid_send, SHOW_MSG, "breakpoint need file:line\n");
+            return 0;
+        }
+    } else {
+        std::string bpos = result[1];
+        DLOG("process_b_command start %s", bpos.c_str());
 
-    std::string delimiter = ":";
-    size_t pos = 0;
-    std::string token;
-    std::vector <std::string> tokens;
-    while ((pos = bpos.find(delimiter)) != std::string::npos) {
-        std::string token = bpos.substr(0, pos);
-        tokens.push_back(token);
-        bpos.erase(0, pos + delimiter.length());
-    }
-    tokens.push_back(bpos);
-    if (tokens.size() < 2) {
-        send_msg(g_qid_send, SHOW_MSG, "breakpoint need file:line\n");
-        return 0;
+        std::string delimiter = ":";
+        size_t pos = 0;
+        std::string token;
+        std::vector <std::string> tokens;
+        while ((pos = bpos.find(delimiter)) != std::string::npos) {
+            std::string token = bpos.substr(0, pos);
+            tokens.push_back(token);
+            bpos.erase(0, pos + delimiter.length());
+        }
+        tokens.push_back(bpos);
+        if (tokens.size() < 2) {
+            send_msg(g_qid_send, SHOW_MSG, "breakpoint need file:line\n");
+            return 0;
+        }
+        file = tokens[0];
+        linestr = tokens[1];
     }
 
-    std::string file = tokens[0];
-    std::string linestr = tokens[1];
     DLOG("process_b_command start %s %s", file.c_str(), linestr.c_str());
     int line = atoi(linestr.c_str());
 
@@ -231,6 +250,52 @@ int process_c_command(lua_State *L) {
     return 0;
 }
 
+int process_dis_command(lua_State *L, const std::vector <std::string> &result) {
+    int bid = -1;
+    if (result.size() >= 2) {
+        bid = atoi(result[1].c_str());
+    }
+
+    for (int i = 0; i < g_blist.size(); ++i) {
+        if (g_blist[i].no == bid || bid == -1) {
+            g_blist[i].en = false;
+        }
+    }
+
+    char buff[128] = {0};
+    if (bid != -1) {
+        snprintf(buff, sizeof(buff) - 1, "disable breakpoint %d\n", bid);
+    } else {
+        snprintf(buff, sizeof(buff) - 1, "disable all breakpoint\n");
+    }
+    std::string ret = buff;
+    send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    return 0;
+}
+
+int process_en_command(lua_State *L, const std::vector <std::string> &result) {
+    int bid = -1;
+    if (result.size() >= 2) {
+        bid = atoi(result[1].c_str());
+    }
+
+    for (int i = 0; i < g_blist.size(); ++i) {
+        if (g_blist[i].no == bid || bid == -1) {
+            g_blist[i].en = true;
+        }
+    }
+
+    char buff[128] = {0};
+    if (bid != -1) {
+        snprintf(buff, sizeof(buff) - 1, "enable breakpoint %d\n", bid);
+    } else {
+        snprintf(buff, sizeof(buff) - 1, "enable all breakpoint\n");
+    }
+    std::string ret = buff;
+    send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    return 0;
+}
+
 int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
     std::string command = data;
     if (command == "") {
@@ -261,6 +326,10 @@ int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) 
         ret = process_s_command(L);
     } else if (token == "c") {
         ret = process_c_command(L);
+    } else if (token == "dis") {
+        ret = process_dis_command(L, result);
+    } else if (token == "en") {
+        ret = process_en_command(L, result);
     }
 
     if (g_step != 0 && g_step_next_in == 0 && g_step_next == 0) {
