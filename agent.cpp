@@ -11,6 +11,7 @@ struct BreakPoint {
     int line;
     int no;
     bool en;
+    int hit;
 };
 
 const int RUNNING_STATE_STOP = 0;
@@ -79,7 +80,8 @@ int process_help_command() {
     std::string ret = "h\thelp commands\n"
                       "q\tquit\n"
                       "bt\tshow cur call stack\n"
-                      "b\tadd breakpoint\n";
+                      "b\tadd breakpoint, eg: b test.lua:123\n"
+                      "i\tshow info, eg: i b\n";
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
     return 0;
 }
@@ -125,7 +127,7 @@ int process_b_command(lua_State *L, lua_Debug *ar, const std::vector <std::strin
         bpos.erase(0, pos + delimiter.length());
     }
     tokens.push_back(bpos);
-    if (result.size() < 2) {
+    if (tokens.size() < 2) {
         send_msg(g_qid_send, SHOW_MSG, "breakpoint need file:line\n");
         return 0;
     }
@@ -151,6 +153,7 @@ int process_b_command(lua_State *L, lua_Debug *ar, const std::vector <std::strin
         b.file = file;
         b.line = line;
         b.no = maxno + 1;
+        b.hit = 0;
         g_blist.push_back(b);
         bindex = g_blist.size() - 1;
     }
@@ -165,6 +168,31 @@ int process_b_command(lua_State *L, lua_Debug *ar, const std::vector <std::strin
     DLOG("process_b_command %d %s %d", g_blist[bindex].no, g_blist[bindex].file.c_str(), g_blist[bindex].line);
     ret = buff;
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+
+    return 0;
+}
+
+int process_i_command(lua_State *L, lua_Debug *ar, const std::vector <std::string> &result) {
+    if (result.size() < 2) {
+        send_msg(g_qid_send, SHOW_MSG, "info need param\n");
+        return 0;
+    }
+
+    std::string param = result[1];
+    if (param == "b") {
+        // Num     Type           Disp Enb Address            What
+        //1       breakpoint     keep y   0x000000000041458c in lua_pcallk at lapi.c:968
+        std::string ret = "Num\tEnb\tWhat\t\tHit\n";
+        char buff[128] = {0};
+        for (int i = 0; i < g_blist.size(); ++i) {
+            memset(buff, 0, sizeof(buff));
+            snprintf(buff, sizeof(buff) - 1, "%d\t%s\t%s:%d\t\t%d\n", g_blist[i].no, g_blist[i].en ? "y" : "n",
+                     g_blist[i].file.c_str(), g_blist[i].line, g_blist[i].hit);
+            ret = ret + buff;
+        }
+        DLOG("process_i_command b %s", ret.c_str());
+        send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    }
 
     return 0;
 }
@@ -190,6 +218,8 @@ int process_command(lua_State *L, lua_Debug *ar, long type, char data[QUEUED_MES
         return process_bt_command(L, ar);
     } else if (token == "b") {
         return process_b_command(L, ar, result);
+    } else if (token == "i") {
+        return process_i_command(L, ar, result);
     }
     return 0;
 }
