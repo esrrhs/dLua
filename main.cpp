@@ -170,12 +170,7 @@ int process_command() {
     std::string token = result[0];
     DLOG("command begin %s", token.c_str());
 
-    if (token == "h") {
-        printf("h\thelp commands\n"
-               "q\tquit\n"
-               "bt\tshow cur call stack\n"
-        );
-    } else if (token == "q") {
+    if (token == "q") {
         g_quit = 1;
     } else {
         send_msg(g_qid_send, COMMAND_MSG, g_command.c_str());
