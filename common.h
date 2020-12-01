@@ -129,7 +129,7 @@ static int open_msg_queue(const char *tmpfilename, int pid) {
 
     msqid_ds buf;
     if (msgctl(qid, IPC_STAT, &buf) == -1) {
-        DERR("msgctl get fail %s %d %s", qid, errno, strerror(errno));
+        DERR("msgctl get fail %d %d %s", qid, errno, strerror(errno));
         return -1;
     }
 
@@ -137,12 +137,12 @@ static int open_msg_queue(const char *tmpfilename, int pid) {
 
     buf.msg_qbytes = 1024 * 1024;
     if (msgctl(qid, IPC_SET, &buf) == -1) {
-        DERR("msgctl set fail %s %d %s", qid, errno, strerror(errno));
+        DERR("msgctl set fail %d %d %s", qid, errno, strerror(errno));
         return -1;
     }
 
     if (msgctl(qid, IPC_STAT, &buf) == -1) {
-        DERR("msgctl get fail %s %d %s", qid, errno, strerror(errno));
+        DERR("msgctl get fail %d %d %s", qid, errno, strerror(errno));
         return -1;
     }
 
