@@ -35,7 +35,7 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
-const int open_debug = 1;
+const int open_debug = 0;
 
 #define DLOG(...) if (open_debug) {dlog(stdout, "[DEBUG] ", __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__);}
 #define DERR(...)  {dlog(stderr, "[ERROR] ", __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__);}
