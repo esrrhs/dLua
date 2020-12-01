@@ -423,9 +423,8 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
     std::string ret;
     char buff[128] = {0};
     // Breakpoint 2 at 0x41458c: file lapi.c, line 968.
-    snprintf(buff, sizeof(buff) - 1, "Breakpoint %d at file %s, line %d\n", g_blist[bindex].no,
-             g_blist[bindex].file.c_str(),
-             g_blist[bindex].line);
+    snprintf(buff, sizeof(buff) - 1, "Breakpoint %d at file %s, line %d, if %s\n", g_blist[bindex].no,
+             g_blist[bindex].file.c_str(), g_blist[bindex].line, g_blist[bindex].ifstr.c_str());
     DLOG("process_b_command %d %s %d", g_blist[bindex].no, g_blist[bindex].file.c_str(), g_blist[bindex].line);
     ret = buff;
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
