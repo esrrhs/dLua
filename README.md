@@ -3,8 +3,8 @@
 
 # 特性
 * 支持Linux平台
-* 附加到其他进程上，开始调试
-* 常用命令，如设置条件断点、查看变量、设置变量
+* 通过附加到其他进程上，进行调试
+* gdb风格的调试指令，包括设置条件断点、查看变量、设置变量
 
 # 编译
 * 用脚本编译dlua，生成```dlua```与```dluaagent.so```，```dlua```是控制台，```dluaagent.so```是调试插件
@@ -88,6 +88,10 @@ b string_time_to_unix_time_with_tz
 打在某个嵌套函数的入口
 ```
 b _G.test.getweekstart_by_tz_test
+```
+条件断点，方括号的tz表示需要的参数
+```
+b string_time_to_unix_time_with_tz if [tz] tz==800
 ```
 #### i
 罗列当前的断点
