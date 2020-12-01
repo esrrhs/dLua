@@ -186,6 +186,7 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result) {
 
     if (result.size() < 2) {
         if (g_step != 0) {
+            // b
             lua_Debug entry;
             memset(&entry, 0, sizeof(entry));
             if (lua_getstack(L, g_step_debug_level, &entry) <= 0) {
@@ -218,6 +219,7 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result) {
         if (tokens.size() < 2) {
             std::string bpoint = tokens[0];
             if (std::all_of(bpoint.begin(), bpoint.end(), ::isdigit)) {
+                // b 123
                 lua_Debug entry;
                 memset(&entry, 0, sizeof(entry));
                 if (lua_getstack(L, g_step_debug_level, &entry) <= 0) {
@@ -230,12 +232,35 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result) {
                 file = entry.short_src;
                 linestr = tokens[0];
             } else {
+                // b xxx.xxx.xxx
+                std::string delimiter = ".";
+                size_t pos = 0;
+                std::string token;
+                std::vector <std::string> tokens;
+                while ((pos = bpoint.find(delimiter)) != std::string::npos) {
+                    std::string token = bpoint.substr(0, pos);
+                    tokens.push_back(token);
+                    bpoint.erase(0, pos + delimiter.length());
+                }
+                tokens.push_back(bpoint);
+
+                lua_getglobal(L, tokens[0].c_str());
+                for (int i = 0; i < tokens.size() - 1; ++i) {
+                    if (!lua_istable(L, -1)) {
+                        lua_pop(L, 1);
+                        send_msg(g_qid_send, SHOW_MSG, (std::string("can not find table ") + tokens[i]).c_str());
+                        return 0;
+                    }
+                    lua_getfield(L, -1, tokens[i + 1].c_str());
+                    lua_remove(L, -2);
+                }
+
                 lua_Debug entry;
                 memset(&entry, 0, sizeof(entry));
-                lua_getglobal(L, bpoint.c_str());  /* 取得全局变量 'f' */
                 if (!lua_isfunction(L, -1)) {
                     lua_pop(L, 1);
-                    send_msg(g_qid_send, SHOW_MSG, (std::string("can not find function ") + bpoint).c_str());
+                    send_msg(g_qid_send, SHOW_MSG,
+                             (std::string("can not find function ") + tokens[tokens.size() - 1]).c_str());
                     return 0;
                 }
                 int status = lua_getinfo(L, ">S", &entry);
@@ -246,6 +271,7 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result) {
                 linestr = std::to_string(entry.linedefined + 1);
             }
         } else {
+            // b test.lua:123
             file = tokens[0];
             linestr = tokens[1];
         }
