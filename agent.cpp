@@ -451,7 +451,8 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result) {
     DLOG("luaL_dostring ret %s", ret.c_str());
     lua_getglobal(L, "dlua_pprint");
     if (!lua_isfunction(L, -1)) {
-        send_msg(g_qid_send, SHOW_MSG, "get _G.dlua_pprint fail\n");
+        lua_pop(L, 1);
+        send_msg(g_qid_send, SHOW_MSG, "get dlua_pprint fail\n");
         return 0;
     }
 

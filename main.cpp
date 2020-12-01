@@ -230,6 +230,7 @@ int process() {
         }
 
         if (msgtype == 0) {
+            usleep(1);
             continue;
         } else {
             if (process_msg(msgtype, msg) != 0) {
