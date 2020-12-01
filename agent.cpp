@@ -212,11 +212,39 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result) {
         }
         tokens.push_back(bpos);
         if (tokens.size() < 2) {
-            send_msg(g_qid_send, SHOW_MSG, "breakpoint need file:line\n");
-            return 0;
+            std::string bpoint = tokens[0];
+            if (std::all_of(bpoint.begin(), bpoint.end(), ::isdigit)) {
+                lua_Debug entry;
+                memset(&entry, 0, sizeof(entry));
+                if (lua_getstack(L, g_step_debug_level, &entry) <= 0) {
+                    return 0;
+                }
+                int status = lua_getinfo(L, "Sln", &entry);
+                if (status <= 0) {
+                    return 0;
+                }
+                file = entry.short_src;
+                linestr = tokens[0];
+            } else {
+                lua_Debug entry;
+                memset(&entry, 0, sizeof(entry));
+                lua_getglobal(L, bpoint.c_str());  /* 取得全局变量 'f' */
+                if (!lua_isfunction(L, -1)) {
+                    lua_pop(L, 1);
+                    send_msg(g_qid_send, SHOW_MSG, (std::string("can not find function ") + bpoint).c_str());
+                    return 0;
+                }
+                int status = lua_getinfo(L, ">S", &entry);
+                if (status <= 0) {
+                    return 0;
+                }
+                file = entry.short_src;
+                linestr = std::to_string(entry.linedefined + 1);
+            }
+        } else {
+            file = tokens[0];
+            linestr = tokens[1];
         }
-        file = tokens[0];
-        linestr = tokens[1];
     }
 
     DLOG("process_b_command start %s %s", file.c_str(), linestr.c_str());
