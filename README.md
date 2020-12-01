@@ -11,7 +11,7 @@
 ```
 # ./build.sh
 ```
-生成```dlua```与```dluaagent.so```，```dlua```是启动器，```dluaagent.so```是注入器
+生成```dlua```与```dluaagent.so```，```dlua```是启动器，```dluaagent.so```是注入器，运行时，两个需要放在同级目录
 
 # 使用
 * 找到目标进程pid，也可以使用项目中的示例代码。假设pid=1234
