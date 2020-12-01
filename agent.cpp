@@ -823,7 +823,7 @@ int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) 
     } else if (token == "fin") {
         ret = process_fin_command(L);
     } else {
-        send_msg(g_qid_send, SHOW_MSG, "use h for help");
+        send_msg(g_qid_send, SHOW_MSG, "use h for help\n");
     }
 
     if (g_step != 0 && g_step_next_in == 0 && g_step_next == 0 && g_step_next_out == 0) {
