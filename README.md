@@ -7,12 +7,10 @@
 * 常用命令，如设置断点、查看变量、设置变量
 
 # 编译
-* 用脚本编译dlua
+* 用脚本编译dlua，生成```dlua```与```dluaagent.so```，```dlua```是启动器，```dluaagent.so```是注入器
 ```
 # ./build.sh
 ```
-生成```dlua```与```dluaagent.so```，```dlua```是启动器，```dluaagent.so```是注入器
-
 * 下载编译[hookso](https://github.com/esrrhs/hookso)
 * 最后将```dlua```、```dluaagent.so```、```hookso```放在同级目录即可使用
 
