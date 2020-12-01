@@ -22,7 +22,7 @@ long long find_luastate() {
 
     int out = 0;
     char cmd[256] = {0};
-    snprintf(cmd, sizeof(cmd), "pstack %d | grep \"in luaV_execute\" | grep \"=0x[0-9abcdef]*\" -o", g_pid);
+    snprintf(cmd, sizeof(cmd), "pstack %d | grep \"in luaV_execute\" | grep \"=0x[0-9abcdef]*\" -o | head -n 1", g_pid);
     std::string ret = exec_command(cmd, out);
     if (out != 0) {
         DLOG("exec_command fail pid %d command %s", g_pid, cmd);
@@ -145,7 +145,7 @@ int init_env() {
 
 int process_msg(long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
     if (type == SHOW_MSG) {
-        printf(data);
+        printf("%s", data);
     } else if (type == INPUT_MSG) {
         g_int = 1;
     }
