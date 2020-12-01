@@ -50,7 +50,7 @@ while true do
     local begin_time2 = string_time_to_unix_time("2020-11-02 00:00:00")
     getweekstart_by_tz(begin_time2, -800)
 
-    local begin_time3 = string_time_to_unix_time_with_tz("2020-11-02 00:00:00", -800)
+    local begin_time3 = string_time_to_unix_time_with_tz("2020-11-02 00:00:00", 800)
     getweekstart_by_tz(begin_time3, -800)
 
     local begin_time4 = string_time_to_unix_time_with_tz("2020-11-02 00:00:00", -800)
