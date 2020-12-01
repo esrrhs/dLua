@@ -3,15 +3,18 @@
 
 # 特性
 * 支持Linux平台
-* 支持附加到其他进程上调试
-* 支持常用命令，如设置断点、查看变量、设置变量
+* 附加到其他进程上，开始调试
+* 常用命令，如设置断点、查看变量、设置变量
 
 # 编译
-直接脚本编译即可
+* 用脚本编译dlua
 ```
 # ./build.sh
 ```
-生成```dlua```与```dluaagent.so```，```dlua```是启动器，```dluaagent.so```是注入器，运行时，两个需要放在同级目录
+生成```dlua```与```dluaagent.so```，```dlua```是启动器，```dluaagent.so```是注入器
+
+* 下载编译[hookso](https://github.com/esrrhs/hookso)
+* 最后将```dlua```、```dluaagent.so```、```hookso```放在同级目录即可使用
 
 # 使用
 * 找到目标进程pid，也可以使用项目中的示例代码。假设pid=1234
