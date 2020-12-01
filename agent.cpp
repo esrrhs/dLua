@@ -385,6 +385,33 @@ int process_en_command(lua_State *L, const std::vector <std::string> &result) {
     return 0;
 }
 
+int process_d_command(lua_State *L, const std::vector <std::string> &result) {
+    int bid = -1;
+    if (result.size() >= 2) {
+        bid = atoi(result[1].c_str());
+    }
+
+    if (bid == -1) {
+        g_blist.clear();
+    } else {
+        for (int i = 0; i < g_blist.size(); ++i) {
+            if (g_blist[i].no == bid) {
+                g_blist.erase(g_blist.begin() + i);
+            }
+        }
+    }
+
+    char buff[128] = {0};
+    if (bid != -1) {
+        snprintf(buff, sizeof(buff) - 1, "delete breakpoint %d\n", bid);
+    } else {
+        snprintf(buff, sizeof(buff) - 1, "delete all breakpoint\n");
+    }
+    std::string ret = buff;
+    send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    return 0;
+}
+
 int process_p_command(lua_State *L, const std::vector <std::string> &result, char data[QUEUED_MESSAGE_MSG_LEN]) {
     if (result.size() < 2) {
         send_msg(g_qid_send, SHOW_MSG, "print need param\n");
@@ -667,6 +694,8 @@ int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) 
         ret = process_dis_command(L, result);
     } else if (token == "en") {
         ret = process_en_command(L, result);
+    } else if (token == "d") {
+        ret = process_d_command(L, result);
     } else if (token == "p") {
         ret = process_p_command(L, result, data);
     } else if (token == "l") {
@@ -737,6 +766,11 @@ int check_bp(lua_State *L) {
 
     std::string curfunc = entry.name ? entry.name : "?";
     int curlevel = lastlevel(L);
+
+    std::string what = entry.what;
+    if (what == "C") {
+        return 0;
+    }
 
     if (bindex != -1) {
         // Breakpoint 1, lua_pcallk (L=0x7f772b029008, nargs=2, nresults=1, errfunc=<optimized out>, ctx=0, k=0x0) at lapi.c:968
