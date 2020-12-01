@@ -31,6 +31,7 @@ std::vector <BreakPoint> g_blist;
 int g_step;
 int g_step_next;
 int g_step_next_in;
+int g_step_next_out;
 std::string g_step_last_file = "";
 std::string g_step_last_func = "";
 int g_step_last_line;
@@ -114,6 +115,7 @@ int ini_agent() {
     g_step = 0;
     g_step_next = 0;
     g_step_next_in = 0;
+    g_step_next_out = 0;
     g_step_last_file = "";
     g_step_last_func = "";
     g_step_last_line = 0;
@@ -145,9 +147,11 @@ int process_help_command() {
                       "c\tcontinue run\n"
                       "dis\tdisable breakpoint, eg: dis 1\n"
                       "en\tenable breakpoint, eg: en 1\n"
+                      "d\tdelete breakpoint, eg: d 1\n"
                       "p\tprint exp value, eg: p _G.xxx\n"
                       "l\tlist code\n"
-                      "f\tselect stack frame\n";
+                      "f\tselect stack frame\n"
+                      "fin\tfinish current call\n";
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
     return 0;
 }
@@ -320,6 +324,13 @@ int process_n_command(lua_State *L) {
     return 0;
 }
 
+int process_fin_command(lua_State *L) {
+    if (g_step != 0) {
+        g_step_next_out = 1;
+    }
+    return 0;
+}
+
 int process_s_command(lua_State *L) {
     if (g_step != 0) {
         g_step_next_in = 1;
@@ -331,6 +342,7 @@ int process_c_command(lua_State *L) {
     g_step = 0;
     g_step_next = 0;
     g_step_next_in = 0;
+    g_step_next_out = 0;
     g_step_last_file = "";
     g_step_last_func = "";
     g_step_last_line = 0;
@@ -704,9 +716,11 @@ int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) 
         ret = process_f_command(L, result);
     } else if (token == "set") {
         ret = process_set_command(L, result, data);
+    } else if (token == "fin") {
+        ret = process_fin_command(L);
     }
 
-    if (g_step != 0 && g_step_next_in == 0 && g_step_next == 0) {
+    if (g_step != 0 && g_step_next_in == 0 && g_step_next == 0 && g_step_next_out == 0) {
         send_msg(g_qid_send, INPUT_MSG, "");
     }
 
@@ -760,6 +774,9 @@ int check_bp(lua_State *L) {
             g_blist[i].hit++;
             bindex = i;
             g_step = 1;
+            g_step_next = 0;
+            g_step_next_in = 0;
+            g_step_next_out = 0;
             break;
         }
     }
@@ -785,7 +802,7 @@ int check_bp(lua_State *L) {
     if (g_step == 1) {
         bool need_stop = false;
 
-        if (g_step_next == 0 && g_step_next_in == 0) {
+        if (g_step_next == 0 && g_step_next_in == 0 && g_step_next_out == 0) {
             need_stop = true;
         } else if (g_step_next != 0) {
             if (curlevel > g_step_last_level || (curfile == g_step_last_file && curline == g_step_last_line)) {
@@ -794,6 +811,11 @@ int check_bp(lua_State *L) {
             }
         } else if (g_step_next_in != 0) {
             if (curfile == g_step_last_file && curline == g_step_last_line) {
+            } else {
+                need_stop = true;
+            }
+        } else if (g_step_next_out != 0) {
+            if (curlevel >= g_step_last_level) {
             } else {
                 need_stop = true;
             }
@@ -825,6 +847,7 @@ int check_bp(lua_State *L) {
 
             g_step_next = 0;
             g_step_next_in = 0;
+            g_step_next_out = 0;
             send_msg(g_qid_send, INPUT_MSG, "");
 
             while (1) {
@@ -833,7 +856,8 @@ int check_bp(lua_State *L) {
                     stop_agent();
                     return -1;
                 }
-                if (g_step == 0 || g_step_next != 0 || g_step_next_in != 0 || g_opening != RUNNING_STATE_RUNNING) {
+                if (g_step == 0 || g_step_next != 0 || g_step_next_in != 0 || g_step_next_out != 0 ||
+                    g_opening != RUNNING_STATE_RUNNING) {
                     break;
                 }
                 usleep(100);
