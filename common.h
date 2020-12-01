@@ -32,6 +32,8 @@
 #include <sys/msg.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 const int open_debug = 1;
 

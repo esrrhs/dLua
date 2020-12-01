@@ -510,7 +510,15 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result) {
     return 0;
 }
 
-int process_l_command(lua_State *L) {
+int process_l_command(lua_State *L, const std::vector <std::string> &result) {
+    int width = 5;
+    if (result.size() >= 2) {
+        width = atoi(result[1].c_str());
+        if (width <= 0) {
+            width = 5;
+        }
+    }
+
     if (g_step == 0) {
         send_msg(g_qid_send, SHOW_MSG, "need in step mode\n");
         return 0;
@@ -529,7 +537,7 @@ int process_l_command(lua_State *L) {
     std::string linestr = std::to_string(entry.currentline);
     int curline = atoi(linestr.c_str());
 
-    for (int i = -5; i <= 5; ++i) {
+    for (int i = -width; i <= width; ++i) {
         int line = i + curline;
         if (curline <= 0) {
             continue;
@@ -636,7 +644,7 @@ int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) 
     } else if (token == "p") {
         ret = process_p_command(L, result);
     } else if (token == "l") {
-        ret = process_l_command(L);
+        ret = process_l_command(L, result);
     } else if (token == "f") {
         ret = process_f_command(L, result);
     }

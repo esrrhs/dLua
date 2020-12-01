@@ -153,8 +153,13 @@ int process_msg(long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
 }
 
 int get_command() {
-    printf("\n(dlua) ");
-    std::getline(std::cin, g_command);
+    char *command = readline("\n(dlua) ");
+    if (!command) {
+        return 0;
+    }
+    add_history(command);
+    g_command = command;
+    free(command);
     if (g_command.size() == 0) {
         g_command = g_last_command;
         return 0;
