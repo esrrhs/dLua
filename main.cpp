@@ -145,7 +145,13 @@ int init_env() {
 
 int process_msg(long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
     if (type == SHOW_MSG) {
-        printf("%s", data);
+        std::string tmp = data;
+        if (tmp != "") {
+            if (tmp[tmp.length() - 1] != '\n') {
+                tmp += "\n";
+            }
+            printf("%s", tmp.c_str());
+        }
     } else if (type == INPUT_MSG) {
         g_int = 1;
     }

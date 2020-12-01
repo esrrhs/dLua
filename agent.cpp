@@ -12,6 +12,9 @@ struct BreakPoint {
     int no;
     bool en;
     int hit;
+    std::string ifstr;
+    std::string iffunc;
+    std::vector <std::string> iffuncparam;
 };
 
 const int RUNNING_STATE_STOP = 0;
@@ -181,9 +184,48 @@ int process_bt_command(lua_State *L) {
     return 0;
 }
 
-int process_b_command(lua_State *L, const std::vector <std::string> &result) {
+bool find_and_push_val(lua_State *L, std::string param, lua_Debug *entry) {
+    bool find = false;
+    int index = 1;
+    while (1) {
+        const char *name = lua_getlocal(L, entry, index);
+        if (!name) {
+            break;
+        }
+        if (param == name) {
+            find = true;
+            DLOG("find local %s", name);
+            break;
+        } else {
+            lua_pop(L, 1);
+        }
+        index++;
+    }
+
+    if (!find) {
+        index = 1;
+        while (1) {
+            const char *name = lua_getupvalue(L, -1, index);
+            if (!name) {
+                break;
+            }
+            if (param == name) {
+                find = true;
+                DLOG("find upvalue %s", name);
+                break;
+            } else {
+                lua_pop(L, 1);
+            }
+            index++;
+        }
+    }
+    return find;
+}
+
+int process_b_command(lua_State *L, const std::vector <std::string> &result, char data[QUEUED_MESSAGE_MSG_LEN]) {
     std::string file;
     std::string linestr;
+    std::string ifparam = "";
 
     if (result.size() < 2) {
         if (g_step != 0) {
@@ -276,9 +318,28 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result) {
             file = tokens[0];
             linestr = tokens[1];
         }
+
+        // b xxx if a==x
+        if (result.size() >= 4) {
+            std::string iftr = result[2];
+            if (iftr != "if") {
+                send_msg(g_qid_send, SHOW_MSG, "eg: b test.lua:33 if [a,b] a + b == 10 ");
+                return 0;
+            }
+
+            std::string input = data;
+            input.erase(0, input.find_first_not_of("b"));
+            input.erase(0, input.find_first_not_of(" "));
+            input.erase(0, input.find_first_not_of(result[1]));
+            input.erase(0, input.find_first_not_of(" "));
+            input.erase(0, input.find_first_not_of("if"));
+            input.erase(0, input.find_first_not_of(" "));
+
+            ifparam = input;
+        }
     }
 
-    DLOG("process_b_command start %s %s", file.c_str(), linestr.c_str());
+    DLOG("process_b_command start %s %s %s", file.c_str(), linestr.c_str(), ifparam.c_str());
     int line = atoi(linestr.c_str());
 
     int bindex = -1;
@@ -292,6 +353,59 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result) {
             maxno = g_blist[i].no;
         }
     }
+
+    std::string iffunc = "";
+    std::vector <std::string> iffuncparam;
+    if (ifparam != "") {
+        std::string str = ifparam;
+        std::regex r("\\[[a-zA-Z_0-9\\,]+\\]");
+        auto words_begin = std::sregex_iterator(str.begin(), str.end(), r);
+        auto words_end = std::sregex_iterator();
+        std::string inputvals = "";
+        for (auto it = words_begin; it != words_end; ++it) {
+            inputvals = it->str();
+            break;
+        }
+        if (inputvals == "") {
+            send_msg(g_qid_send, SHOW_MSG, "eg: b test.lua:33 if [a,b] a + b == 10 ");
+            return 0;
+        }
+        ifparam.erase(0, ifparam.find_first_not_of(inputvals));
+
+        std::map<std::string, int> inputval;
+        std::regex rr("[a-zA-Z_0-9]+");
+        auto words_beginr = std::sregex_iterator(inputvals.begin(), inputvals.end(), rr);
+        auto words_endr = std::sregex_iterator();
+        for (auto it = words_beginr; it != words_endr; ++it) {
+            inputval[it->str()] = 1;
+        }
+
+        int oldn = lua_gettop(L);
+        std::string loadstr = "function dlua_debug_if" + std::to_string(maxno + 1) + "(";
+        for (auto it = inputval.begin(); it != inputval.end();) {
+            loadstr = loadstr + it->first;
+            it++;
+            if (it != inputval.end()) {
+                loadstr = loadstr + ",";
+            }
+        }
+        loadstr = loadstr + ") return " + ifparam + " end";
+        DLOG("process_b_command if %s", loadstr.c_str());
+        int status = luaL_dostring(L, loadstr.c_str());
+        if (status != 0) {
+            std::string ret = lua_tostring(L, -1);
+            lua_pop(L, 1);
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+            return 0;
+        }
+        lua_settop(L, oldn);
+
+        iffunc = "dlua_debug_if" + std::to_string(maxno + 1);
+        for (auto it = inputval.begin(); it != inputval.end(); it++) {
+            iffuncparam.push_back(it->first);
+        }
+    }
+
     if (bindex == -1) {
         BreakPoint b;
         b.file = file;
@@ -302,6 +416,9 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result) {
         bindex = g_blist.size() - 1;
     }
     g_blist[bindex].en = true;
+    g_blist[bindex].ifstr = ifparam;
+    g_blist[bindex].iffunc = iffunc;
+    g_blist[bindex].iffuncparam = iffuncparam;
 
     std::string ret;
     char buff[128] = {0};
@@ -326,12 +443,12 @@ int process_i_command(lua_State *L, const std::vector <std::string> &result) {
     if (param == "b") {
         // Num     Type           Disp Enb Address            What
         //1       breakpoint     keep y   0x000000000041458c in lua_pcallk at lapi.c:968
-        std::string ret = "Num\tEnb\tWhat\t\tHit\n";
+        std::string ret = "Num\tEnb\tWhat\tHit\tIf\n";
         char buff[128] = {0};
         for (int i = 0; i < g_blist.size(); ++i) {
             memset(buff, 0, sizeof(buff));
-            snprintf(buff, sizeof(buff) - 1, "%d\t%s\t%s:%d\t\t%d\n", g_blist[i].no, g_blist[i].en ? "y" : "n",
-                     g_blist[i].file.c_str(), g_blist[i].line, g_blist[i].hit);
+            snprintf(buff, sizeof(buff) - 1, "%d\t%s\t%s:%d\t%d\t%s\n", g_blist[i].no, g_blist[i].en ? "y" : "n",
+                     g_blist[i].file.c_str(), g_blist[i].line, g_blist[i].hit, g_blist[i].ifstr.c_str());
             ret = ret + buff;
         }
         DLOG("process_i_command b %s", ret.c_str());
@@ -527,41 +644,7 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
         return 0;
     }
 
-    bool find = false;
-    int index = 1;
-    while (1) {
-        const char *name = lua_getlocal(L, &entry, index);
-        if (!name) {
-            break;
-        }
-        if (param == name) {
-            find = true;
-            DLOG("find local %s", name);
-            break;
-        } else {
-            lua_pop(L, 1);
-        }
-        index++;
-    }
-
-    if (!find) {
-        index = 1;
-        while (1) {
-            const char *name = lua_getupvalue(L, -1, index);
-            if (!name) {
-                break;
-            }
-            if (param == name) {
-                find = true;
-                DLOG("find upvalue %s", name);
-                break;
-            } else {
-                lua_pop(L, 1);
-            }
-            index++;
-        }
-    }
-
+    bool find = find_and_push_val(L, param, &entry);
     if (!find) {
         std::string tmp = "return dlua_pprint(" + param + ")";
         luaL_dostring(L, tmp.c_str());
@@ -797,7 +880,7 @@ int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) 
     } else if (token == "bt") {
         ret = process_bt_command(L);
     } else if (token == "b") {
-        ret = process_b_command(L, result);
+        ret = process_b_command(L, result, data);
     } else if (token == "i") {
         ret = process_i_command(L, result);
     } else if (token == "n") {
@@ -877,12 +960,65 @@ int check_bp(lua_State *L) {
 
     for (int i = 0; i < g_blist.size(); ++i) {
         if (g_blist[i].en && g_blist[i].file == curfile && g_blist[i].line == curline) {
-            g_blist[i].hit++;
-            bindex = i;
-            g_step = 1;
-            g_step_next = 0;
-            g_step_next_in = 0;
-            g_step_next_out = 0;
+            bool hit = false;
+            if (g_blist[i].iffunc != "") {
+                int oldn = lua_gettop(L);
+
+                bool ini_ok = true;
+                lua_getglobal(L, g_blist[i].iffunc.c_str());
+                if (lua_isfunction(L, -1)) {
+                    for (int j = 0; j < g_blist[i].iffuncparam.size(); ++j) {
+                        if (!find_and_push_val(L, g_blist[i].iffuncparam[j], &entry)) {
+                            ini_ok = false;
+                            break;
+                        }
+                    }
+                } else {
+                    ini_ok = false;
+                }
+
+                if (ini_ok) {
+                    lua_pcall(L, g_blist[i].iffuncparam.size(), 1, 0);
+
+                    int newn = lua_gettop(L);
+                    if (newn > oldn) {
+                        if (lua_isstring(L, -1)) {
+                            std::string ret = lua_tostring(L, -1);
+                            send_msg(g_qid_send, SHOW_MSG,
+                                     (std::string("breakpoint if val return str ") + ret).c_str());
+                            hit = true;
+                        } else if (lua_isboolean(L, -1)) {
+                            int ret = lua_toboolean(L, -1);
+                            DLOG("b if return %s %d", g_blist[i].ifstr.c_str(), ret);
+                            if (ret) {
+                                hit = true;
+                            }
+                        } else {
+                            int tp = lua_type(L, -1);
+                            const char *tyname = lua_typename(L, tp);
+                            send_msg(g_qid_send, SHOW_MSG,
+                                     (std::string("breakpoint if val type is ") + tyname).c_str());
+                            hit = true;
+                        }
+                        lua_pop(L, 1);
+                    } else {
+                        send_msg(g_qid_send, SHOW_MSG, "breakpoint if val no return");
+                        hit = true;
+                    }
+                }
+                lua_settop(L, oldn);
+            } else {
+                hit = true;
+            }
+
+            if (hit) {
+                g_blist[i].hit++;
+                bindex = i;
+                g_step = 1;
+                g_step_next = 0;
+                g_step_next_in = 0;
+                g_step_next_out = 0;
+            }
             break;
         }
     }
