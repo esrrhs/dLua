@@ -151,7 +151,8 @@ int process_help_command() {
                       "p\tprint exp value, eg: p _G.xxx\n"
                       "l\tlist code\n"
                       "f\tselect stack frame\n"
-                      "fin\tfinish current call\n";
+                      "fin\tfinish current call\n"
+                      "set\tset value, eg: set aa=1\n";
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
     return 0;
 }
@@ -689,11 +690,88 @@ int process_set_command(lua_State *L, const std::vector <std::string> &result, c
     }
 
     std::string input = data;
-    input.erase(0, input.find_first_not_of("p"));
+    input.erase(0, input.find_first_not_of("set"));
     input.erase(0, input.find_first_not_of(" "));
     input.erase(input.find_last_not_of(" ") + 1);
 
-    std::string param = input;
+    std::string delimiter = "=";
+    size_t pos = input.find(delimiter);
+    if (pos == std::string::npos) {
+        send_msg(g_qid_send, SHOW_MSG, "param is xxx=xxx\n");
+        return 0;
+    }
+    std::string val = input.substr(0, pos);
+    input.erase(0, pos + delimiter.length());
+
+    DLOG("process_set_command set %s to %s", val.c_str(), input.c_str());
+
+    lua_Debug entry;
+    memset(&entry, 0, sizeof(entry));
+    if (lua_getstack(L, g_step_debug_level, &entry) <= 0) {
+        return 0;
+    }
+    int status = lua_getinfo(L, "Sln", &entry);
+    if (status <= 0) {
+        return 0;
+    }
+
+    int oldn = lua_gettop(L);
+
+    std::string loadstr = "return " + input;
+    status = luaL_dostring(L, loadstr.c_str());
+    if (status != 0) {
+        std::string ret = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+        return 0;
+    }
+
+    DLOG("luaL_dostring ret ok");
+
+    bool find = false;
+    int index = 1;
+    while (1) {
+        const char *name = lua_getlocal(L, &entry, index);
+        if (!name) {
+            break;
+        }
+        lua_pop(L, 1);
+        if (val == name) {
+            find = true;
+            DLOG("find local %s", name);
+            lua_setlocal(L, &entry, index);
+            break;
+        }
+        index++;
+    }
+
+    if (!find) {
+        index = 1;
+        while (1) {
+            const char *name = lua_getupvalue(L, -1, index);
+            if (!name) {
+                break;
+            }
+            lua_pop(L, 1);
+            if (val == name) {
+                find = true;
+                DLOG("find upvalue %s", name);
+                lua_setupvalue(L, -1, index);
+                break;
+            }
+            index++;
+        }
+    }
+
+    if (!find) {
+        lua_pop(L, 1);
+        std::string tmp = "can not find val " + val;
+        send_msg(g_qid_send, SHOW_MSG, tmp.c_str());
+    } else {
+        send_msg(g_qid_send, SHOW_MSG, "set ok");
+    }
+
+    lua_settop(L, oldn);
 
     return 0;
 }
@@ -744,6 +822,8 @@ int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) 
         ret = process_set_command(L, result, data);
     } else if (token == "fin") {
         ret = process_fin_command(L);
+    } else {
+        send_msg(g_qid_send, SHOW_MSG, "use h for help");
     }
 
     if (g_step != 0 && g_step_next_in == 0 && g_step_next == 0 && g_step_next_out == 0) {
