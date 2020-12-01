@@ -385,7 +385,7 @@ int process_en_command(lua_State *L, const std::vector <std::string> &result) {
     return 0;
 }
 
-int process_p_command(lua_State *L, const std::vector <std::string> &result) {
+int process_p_command(lua_State *L, const std::vector <std::string> &result, char data[QUEUED_MESSAGE_MSG_LEN]) {
     if (result.size() < 2) {
         send_msg(g_qid_send, SHOW_MSG, "print need param\n");
         return 0;
@@ -396,7 +396,12 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result) {
         return 0;
     }
 
-    std::string param = result[1];
+    std::string input = data;
+    input.erase(0, input.find_first_not_of("p"));
+    input.erase(0, input.find_first_not_of(" "));
+    input.erase(input.find_last_not_of(" ") + 1);
+
+    std::string param = input;
 
     lua_Debug entry;
     memset(&entry, 0, sizeof(entry));
@@ -607,6 +612,27 @@ int process_f_command(lua_State *L, const std::vector <std::string> &result) {
     return 0;
 }
 
+int process_set_command(lua_State *L, const std::vector <std::string> &result, char data[QUEUED_MESSAGE_MSG_LEN]) {
+    if (result.size() < 2) {
+        send_msg(g_qid_send, SHOW_MSG, "set need param\n");
+        return 0;
+    }
+
+    if (g_step == 0) {
+        send_msg(g_qid_send, SHOW_MSG, "need in step mode\n");
+        return 0;
+    }
+
+    std::string input = data;
+    input.erase(0, input.find_first_not_of("p"));
+    input.erase(0, input.find_first_not_of(" "));
+    input.erase(input.find_last_not_of(" ") + 1);
+
+    std::string param = input;
+
+    return 0;
+}
+
 int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
     std::string command = data;
     if (command == "") {
@@ -642,11 +668,13 @@ int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) 
     } else if (token == "en") {
         ret = process_en_command(L, result);
     } else if (token == "p") {
-        ret = process_p_command(L, result);
+        ret = process_p_command(L, result, data);
     } else if (token == "l") {
         ret = process_l_command(L, result);
     } else if (token == "f") {
         ret = process_f_command(L, result);
+    } else if (token == "set") {
+        ret = process_set_command(L, result, data);
     }
 
     if (g_step != 0 && g_step_next_in == 0 && g_step_next == 0) {
