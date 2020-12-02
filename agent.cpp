@@ -383,7 +383,11 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
     int line = atoi(linestr.c_str());
 
     std::string code = get_file_code(file, line);
-    if (code == "") {
+    std::string tmpcode = code;
+    tmpcode.erase(std::remove(tmpcode.begin(), tmpcode.end(), '\r'), tmpcode.end());
+    tmpcode.erase(std::remove(tmpcode.begin(), tmpcode.end(), '\n'), tmpcode.end());
+    tmpcode.erase(std::remove(tmpcode.begin(), tmpcode.end(), ' '), tmpcode.end());
+    if (tmpcode == "") {
         std::string ret;
         char buff[128] = {0};
         snprintf(buff, sizeof(buff) - 1, "there is no code at %s:%d", file.c_str(), line);
@@ -639,7 +643,7 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
                           "    end\n"
                           "    local ret = \"\"\n"
                           "    for k, v in pairs(tbl) do\n"
-                          "        if type(v) ~= \"function\" then\n"
+                          "        if type(v) ~= \"function\" and type(v) ~= \"userdata\" and type(v) ~= \"thread\" then\n"
                           "            local formatting = string.rep(\"  \", indent) .. k .. \": \"\n"
                           "            if type(v) == \"table\" then\n"
                           "                if visit[v] then\n"
