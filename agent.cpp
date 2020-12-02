@@ -368,6 +368,7 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
             }
 
             std::string input = data;
+            input.erase(0, input.find_first_not_of(" "));
             input.erase(0, input.find_first_not_of("b"));
             input.erase(0, input.find_first_not_of(" "));
             input.erase(0, input.find_first_not_of(result[1]));
@@ -619,6 +620,7 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
     }
 
     std::string input = data;
+    input.erase(0, input.find_first_not_of(" "));
     input.erase(0, input.find_first_not_of("p"));
     input.erase(0, input.find_first_not_of(" "));
     input.erase(input.find_last_not_of(" ") + 1);
@@ -870,6 +872,7 @@ int process_set_command(lua_State *L, const std::vector <std::string> &result, c
     }
 
     std::string input = data;
+    input.erase(0, input.find_first_not_of(" "));
     input.erase(0, input.find_first_not_of("set"));
     input.erase(0, input.find_first_not_of(" "));
     input.erase(input.find_last_not_of(" ") + 1);
