@@ -79,8 +79,9 @@ int fini_env() {
     return 0;
 }
 
+
 void int_handler(int sig) {
-    signal(sig, SIG_IGN);
+    signal(SIGINT, SIG_IGN);
     g_int = 1;
     signal(SIGINT, int_handler);
 }
@@ -159,7 +160,9 @@ int process_msg(long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
 }
 
 int get_command() {
+    signal(SIGINT, SIG_IGN);
     char *command = readline("\n(dlua) ");
+    signal(SIGINT, int_handler);
     if (!command) {
         return 0;
     }
