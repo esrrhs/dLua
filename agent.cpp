@@ -639,7 +639,7 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
 
     int oldn = lua_gettop(L);
 
-    const char *loadstr = "function dlua_tprint (tbl, indent, visit, path)\n"
+    const char *loadstr = "function dlua_tprint (tbl, indent, visit, path, max)\n"
                           "    if not indent then\n"
                           "        indent = 0\n"
                           "    end\n"
@@ -652,14 +652,15 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
                           "                    ret = ret .. formatting .. \"*Recursion at \" .. visit[v] .. \"*\\n\"\n"
                           "                else\n"
                           "                    visit[v] = path .. \"/\" .. tostring(k)\n"
-                          "                    ret = ret .. formatting .. \"\\n\" .. dlua_tprint(v, indent + 1, visit, path .. \"/\" .. tostring(k))\n"
+                          "                    ret = ret .. formatting .. \"\\n\" .. dlua_tprint(v, indent + 1, visit, path .. \"/\" .. tostring(k), max)\n"
                           "                end\n"
-                          "            elseif type(v) == 'boolean' then\n"
+                          "            elseif type(v) == 'boolean' or type(v) == 'number' then\n"
                           "                ret = ret .. formatting .. tostring(v) .. \"\\n\"\n"
                           "            elseif type(v) == 'string' then\n"
                           "                ret = ret .. formatting .. \"'\" .. tostring(v) .. \"'\" .. \"\\n\"\n"
-                          "            else\n"
-                          "                ret = ret .. formatting .. v .. \"\\n\"\n"
+                          "            end\n"
+                          "            if #ret > max then\n"
+                          "                break\n"
                           "            end\n"
                           "        end\n"
                           "    end\n"
@@ -672,7 +673,12 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
                           "    if type(tbl) ~= \"table\" then\n"
                           "        return tostring(tbl)\n"
                           "    end\n"
-                          "    return dlua_tprint(tbl, 0, visit, path)\n"
+                          "    local max = 1024 * 1024\n"
+                          "    local ret = dlua_tprint(tbl, 0, visit, path, max)\n"
+                          "    if #ret > max then\n"
+                          "        ret = ret .. \"...\"\n"
+                          "    end\n"
+                          "    return ret\n"
                           "end\n"
                           "return _G.dlua_pprint(\"ok\")";
 
@@ -732,14 +738,6 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
         lua_pcall(L, inputval.size(), 1, 0);
 
         lua_pcall(L, 1, 1, 0);
-
-        int newn = lua_gettop(L);
-        if (newn > oldn) {
-            std::string ret = lua_tostring(L, -1);
-            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
-        }
-
-        lua_settop(L, oldn);
     } else {
         // p aa
         bool find = find_and_push_val(L, param, &entry);
@@ -750,15 +748,23 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
         } else {
             lua_pcall(L, 1, 1, 0);
         }
-
-        int newn = lua_gettop(L);
-        if (newn > oldn) {
-            std::string ret = lua_tostring(L, -1);
-            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
-        }
-
-        lua_settop(L, oldn);
     }
+
+    int newn = lua_gettop(L);
+    if (newn > oldn) {
+        std::string ret = lua_tostring(L, -1);
+
+        std::string delimiter = "\n";
+        size_t pos = 0;
+        while ((pos = ret.find(delimiter)) != std::string::npos) {
+            std::string token = ret.substr(0, pos);
+            send_msg(g_qid_send, SHOW_MSG, token.c_str());
+            ret.erase(0, pos + delimiter.length());
+        }
+        send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    }
+
+    lua_settop(L, oldn);
 
     return 0;
 }
