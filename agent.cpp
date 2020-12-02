@@ -285,10 +285,12 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
                 }
                 tokens.push_back(bpoint);
 
+                int oldn = lua_gettop(L);
+
                 lua_getglobal(L, tokens[0].c_str());
                 for (int i = 0; i < tokens.size() - 1; ++i) {
                     if (!lua_istable(L, -1)) {
-                        lua_pop(L, 1);
+                        lua_settop(L, oldn);
                         send_msg(g_qid_send, SHOW_MSG, (std::string("can not find table ") + tokens[i]).c_str());
                         return 0;
                     }
@@ -299,15 +301,19 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
                 lua_Debug entry;
                 memset(&entry, 0, sizeof(entry));
                 if (!lua_isfunction(L, -1)) {
-                    lua_pop(L, 1);
+                    lua_settop(L, oldn);
                     send_msg(g_qid_send, SHOW_MSG,
                              (std::string("can not find function ") + tokens[tokens.size() - 1]).c_str());
                     return 0;
                 }
                 int status = lua_getinfo(L, ">S", &entry);
                 if (status <= 0) {
+                    lua_settop(L, oldn);
                     return 0;
                 }
+
+                lua_settop(L, oldn);
+
                 file = entry.short_src;
                 linestr = std::to_string(entry.linedefined + 1);
             }
@@ -408,7 +414,7 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
         int status = luaL_dostring(L, loadstr.c_str());
         if (status != 0) {
             std::string ret = lua_tostring(L, -1);
-            lua_pop(L, 1);
+            lua_settop(L, oldn);
             send_msg(g_qid_send, SHOW_MSG, ret.c_str());
             return 0;
         }
@@ -618,20 +624,22 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
                           "    end\n"
                           "    local ret = \"\"\n"
                           "    for k, v in pairs(tbl) do\n"
-                          "        local formatting = string.rep(\"  \", indent) .. k .. \": \"\n"
-                          "        if type(v) == \"table\" then\n"
-                          "            if visit[v] then\n"
-                          "                ret = ret .. formatting .. \"*Recursion at \" .. visit[v] .. \"*\\n\"\n"
+                          "        if type(v) ~= \"function\" then\n"
+                          "            local formatting = string.rep(\"  \", indent) .. k .. \": \"\n"
+                          "            if type(v) == \"table\" then\n"
+                          "                if visit[v] then\n"
+                          "                    ret = ret .. formatting .. \"*Recursion at \" .. visit[v] .. \"*\\n\"\n"
+                          "                else\n"
+                          "                    visit[v] = path .. \"/\" .. tostring(k)\n"
+                          "                    ret = ret .. formatting .. \"\\n\" .. dlua_tprint(v, indent + 1, visit, path .. \"/\" .. tostring(k))\n"
+                          "                end\n"
+                          "            elseif type(v) == 'boolean' then\n"
+                          "                ret = ret .. formatting .. tostring(v) .. \"\\n\"\n"
+                          "            elseif type(v) == 'string' then\n"
+                          "                ret = ret .. formatting .. \"'\" .. tostring(v) .. \"'\" .. \"\\n\"\n"
                           "            else\n"
-                          "                visit[v] = path .. \"/\" .. tostring(k)\n"
-                          "                ret = ret .. formatting .. \"\\n\" .. dlua_tprint(v, indent + 1, visit, path .. \"/\" .. tostring(k))\n"
+                          "                ret = ret .. formatting .. v .. \"\\n\"\n"
                           "            end\n"
-                          "        elseif type(v) == 'boolean' then\n"
-                          "            ret = ret .. formatting .. tostring(v) .. \"\\n\"\n"
-                          "        elseif type(v) == 'string' then\n"
-                          "            ret = ret .. formatting .. \"'\" .. tostring(v) .. \"'\" .. \"\\n\"\n"
-                          "        else\n"
-                          "            ret = ret .. formatting .. v .. \"\\n\"\n"
                           "        end\n"
                           "    end\n"
                           "    return ret\n"
@@ -670,7 +678,6 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
     int newn = lua_gettop(L);
     if (newn > oldn) {
         std::string ret = lua_tostring(L, -1);
-        lua_pop(L, 1);
         send_msg(g_qid_send, SHOW_MSG, ret.c_str());
     }
     lua_settop(L, oldn);
@@ -861,7 +868,6 @@ int process_set_command(lua_State *L, const std::vector <std::string> &result, c
     }
 
     if (!find) {
-        lua_pop(L, 1);
         std::string tmp = "can not find val " + val;
         send_msg(g_qid_send, SHOW_MSG, tmp.c_str());
     } else {
@@ -1014,7 +1020,6 @@ int check_bp(lua_State *L) {
                                      (std::string("breakpoint if val type is ") + tyname).c_str());
                             hit = true;
                         }
-                        lua_pop(L, 1);
                     } else {
                         send_msg(g_qid_send, SHOW_MSG, "breakpoint if val no return");
                         hit = true;
