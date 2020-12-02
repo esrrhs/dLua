@@ -358,7 +358,7 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
     std::vector <std::string> iffuncparam;
     if (ifparam != "") {
         std::string str = ifparam;
-        std::regex r("\\[[a-zA-Z_0-9\\,]+\\]");
+        std::regex r("\\[[a-zA-Z_0-9\\,\\s]*\\]");
         auto words_begin = std::sregex_iterator(str.begin(), str.end(), r);
         auto words_end = std::sregex_iterator();
         std::string inputvals = "";
@@ -370,7 +370,7 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
             send_msg(g_qid_send, SHOW_MSG, "eg: b test.lua:33 if [a,b] a + b == 10 ");
             return 0;
         }
-        ifparam.erase(0, ifparam.find_first_not_of(inputvals));
+        ifparam.erase(0, inputvals.length());
 
         std::map<std::string, int> inputval;
         std::regex rr("[a-zA-Z_0-9]+");
@@ -638,7 +638,7 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
     DLOG("luaL_dostring ret %s", ret.c_str());
     lua_getglobal(L, "dlua_pprint");
     if (!lua_isfunction(L, -1)) {
-        lua_pop(L, 1);
+        lua_settop(L, oldn);
         send_msg(g_qid_send, SHOW_MSG, "get dlua_pprint fail\n");
         return 0;
     }
@@ -803,7 +803,7 @@ int process_set_command(lua_State *L, const std::vector <std::string> &result, c
     status = luaL_dostring(L, loadstr.c_str());
     if (status != 0) {
         std::string ret = lua_tostring(L, -1);
-        lua_pop(L, 1);
+        lua_settop(L, oldn);
         send_msg(g_qid_send, SHOW_MSG, ret.c_str());
         return 0;
     }
