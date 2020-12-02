@@ -342,6 +342,16 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
     DLOG("process_b_command start %s %s %s", file.c_str(), linestr.c_str(), ifparam.c_str());
     int line = atoi(linestr.c_str());
 
+    std::string code = get_file_code(file, line);
+    if (code == "") {
+        std::string ret;
+        char buff[128] = {0};
+        snprintf(buff, sizeof(buff) - 1, "there is no code at %s:%d", file.c_str(), line);
+        ret = buff;
+        send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+        return 0;
+    }
+
     int bindex = -1;
     int maxno = -1;
     for (int i = 0; i < g_blist.size(); ++i) {
@@ -428,6 +438,7 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
     DLOG("process_b_command %d %s %d", g_blist[bindex].no, g_blist[bindex].file.c_str(), g_blist[bindex].line);
     ret = buff;
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    send_msg(g_qid_send, SHOW_MSG, (std::string("code: ") + code).c_str());
 
     return 0;
 }
