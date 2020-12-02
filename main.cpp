@@ -163,7 +163,15 @@ int get_command() {
     if (!command) {
         return 0;
     }
-    add_history(command);
+
+    int oldpos = history_search_pos(command, 1, 0);
+    if (oldpos < 0) {
+        add_history(command);
+    } else {
+        remove_history(oldpos);
+        add_history(command);
+    }
+
     g_command = command;
     free(command);
     if (g_command.size() == 0) {
