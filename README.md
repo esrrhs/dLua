@@ -46,6 +46,7 @@ l       list code
 f       select stack frame
 fin     finish current call
 set     set value, eg: set aa=1
+r       run code, eg: r print("test")
 ```
 
 * 其他命令同理，输入ctrl+c，输入命令即可
@@ -141,6 +142,10 @@ p year
 ```
 p _G.test
 ```
+或者复杂的，查看table中的某一项
+```
+p [tmp] tmp[1]
+```
 #### l
 查看当前栈的附近代码，如
 ```
@@ -161,4 +166,13 @@ f 0
 设置当前栈的变量，如
 ```
 set year=1234
+```
+#### r
+运行特定代码
+```
+r print(123)
+```
+运行复杂代码，加上变量
+```
+r [tmp] tmp[1]=2
 ```

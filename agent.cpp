@@ -155,7 +155,8 @@ int process_help_command() {
                       "l\tlist code\n"
                       "f\tselect stack frame\n"
                       "fin\tfinish current call\n"
-                      "set\tset value, eg: set aa=1\n";
+                      "set\tset value, eg: set aa=1\n"
+                      "r\trun code, eg: r print(\"test\")\n";
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
     return 0;
 }
@@ -680,21 +681,78 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
         return 0;
     }
 
-    bool find = find_and_push_val(L, param, &entry);
-    if (!find) {
-        std::string tmp = "return dlua_pprint(" + param + ")";
-        luaL_dostring(L, tmp.c_str());
-        DLOG("call dlua_pprint %s", param.c_str());
-    } else {
-        lua_pcall(L, 1, 1, 0);
-    }
+    if (result.size() >= 3 && param.length() > 0 && param[0] == '[') {
+        // p [a] a.t
+        std::string leftstr;
+        std::map<std::string, int> inputval;
+        if (get_input_val(param, inputval, leftstr) != 0) {
+            send_msg(g_qid_send, SHOW_MSG, "eg: p [t] t.a");
+            return 0;
+        }
 
-    int newn = lua_gettop(L);
-    if (newn > oldn) {
-        std::string ret = lua_tostring(L, -1);
-        send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+        std::string loadstr = "function dlua_p_val(";
+        for (auto it = inputval.begin(); it != inputval.end();) {
+            loadstr = loadstr + it->first;
+            it++;
+            if (it != inputval.end()) {
+                loadstr = loadstr + ",";
+            }
+        }
+        loadstr = loadstr + ")\n return " + leftstr + "\n end\n";
+        DLOG("process_p_command p %s", loadstr.c_str());
+        int status = luaL_dostring(L, loadstr.c_str());
+        if (status != 0) {
+            std::string ret = lua_tostring(L, -1);
+            lua_settop(L, oldn);
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+            return 0;
+        }
+
+        lua_getglobal(L, "dlua_p_val");
+        if (!lua_isfunction(L, -1)) {
+            lua_settop(L, oldn);
+            send_msg(g_qid_send, SHOW_MSG, "get dlua_p_val fail\n");
+            return 0;
+        }
+
+        for (auto it = inputval.begin(); it != inputval.end(); it++) {
+            if (!find_and_push_val(L, it->first, &entry)) {
+                lua_settop(L, oldn);
+                send_msg(g_qid_send, SHOW_MSG, (std::string("can not find val ") + it->first).c_str());
+                return 0;
+            }
+        }
+
+        lua_pcall(L, inputval.size(), 1, 0);
+
+        lua_pcall(L, 1, 1, 0);
+
+        int newn = lua_gettop(L);
+        if (newn > oldn) {
+            std::string ret = lua_tostring(L, -1);
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+        }
+
+        lua_settop(L, oldn);
+    } else {
+        // p aa
+        bool find = find_and_push_val(L, param, &entry);
+        if (!find) {
+            std::string tmp = "return dlua_pprint(" + param + ")";
+            luaL_dostring(L, tmp.c_str());
+            DLOG("call dlua_pprint %s", param.c_str());
+        } else {
+            lua_pcall(L, 1, 1, 0);
+        }
+
+        int newn = lua_gettop(L);
+        if (newn > oldn) {
+            std::string ret = lua_tostring(L, -1);
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+        }
+
+        lua_settop(L, oldn);
     }
-    lua_settop(L, oldn);
 
     return 0;
 }
@@ -893,6 +951,105 @@ int process_set_command(lua_State *L, const std::vector <std::string> &result, c
     return 0;
 }
 
+int process_r_command(lua_State *L, const std::vector <std::string> &result, char data[QUEUED_MESSAGE_MSG_LEN]) {
+    if (result.size() < 2) {
+        send_msg(g_qid_send, SHOW_MSG, "r need param\n");
+        return 0;
+    }
+
+    if (g_step == 0) {
+        send_msg(g_qid_send, SHOW_MSG, "need in step mode\n");
+        return 0;
+    }
+
+    std::string input = data;
+    input.erase(0, input.find_first_not_of("r"));
+    input.erase(0, input.find_first_not_of(" "));
+    input.erase(input.find_last_not_of(" ") + 1);
+
+    lua_Debug entry;
+    memset(&entry, 0, sizeof(entry));
+    if (lua_getstack(L, g_step_debug_level, &entry) <= 0) {
+        return 0;
+    }
+    int status = lua_getinfo(L, "Sln", &entry);
+    if (status <= 0) {
+        return 0;
+    }
+
+    int oldn = lua_gettop(L);
+
+    if (input[0] == '[') {
+        // r [a] print(a.t)
+        std::string leftstr;
+        std::map<std::string, int> inputval;
+        if (get_input_val(input, inputval, leftstr) != 0) {
+            send_msg(g_qid_send, SHOW_MSG, "eg: p [t] t.a");
+            return 0;
+        }
+
+        std::string loadstr = "function dlua_r_val(";
+        for (auto it = inputval.begin(); it != inputval.end();) {
+            loadstr = loadstr + it->first;
+            it++;
+            if (it != inputval.end()) {
+                loadstr = loadstr + ",";
+            }
+        }
+        loadstr = loadstr + ")\n  " + leftstr + "\n end\n";
+        DLOG("process_r_command p %s", loadstr.c_str());
+        int status = luaL_dostring(L, loadstr.c_str());
+        if (status != 0) {
+            std::string ret = lua_tostring(L, -1);
+            lua_settop(L, oldn);
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+            return 0;
+        }
+
+        lua_getglobal(L, "dlua_r_val");
+        if (!lua_isfunction(L, -1)) {
+            lua_settop(L, oldn);
+            send_msg(g_qid_send, SHOW_MSG, "get dlua_r_val fail\n");
+            return 0;
+        }
+
+        for (auto it = inputval.begin(); it != inputval.end(); it++) {
+            if (!find_and_push_val(L, it->first, &entry)) {
+                lua_settop(L, oldn);
+                send_msg(g_qid_send, SHOW_MSG, (std::string("can not find val ") + it->first).c_str());
+                return 0;
+            }
+        }
+
+        lua_pcall(L, inputval.size(), 0, 0);
+        lua_settop(L, oldn);
+    } else {
+        std::string loadstr = "function dlua_r_val(";
+        loadstr = loadstr + ")\n  " + input + "\n end\n";
+        DLOG("process_r_command p %s", loadstr.c_str());
+
+        int status = luaL_dostring(L, loadstr.c_str());
+        if (status != 0) {
+            std::string ret = lua_tostring(L, -1);
+            lua_settop(L, oldn);
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+            return 0;
+        }
+
+        lua_getglobal(L, "dlua_r_val");
+        if (!lua_isfunction(L, -1)) {
+            lua_settop(L, oldn);
+            send_msg(g_qid_send, SHOW_MSG, "get dlua_r_val fail\n");
+            return 0;
+        }
+
+        lua_pcall(L, 0, 0, 0);
+        lua_settop(L, oldn);
+    }
+
+    return 0;
+}
+
 int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
     std::string command = data;
     if (command == "") {
@@ -939,6 +1096,8 @@ int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) 
         ret = process_set_command(L, result, data);
     } else if (token == "fin") {
         ret = process_fin_command(L);
+    } else if (token == "r") {
+        ret = process_r_command(L, result, data);
     } else {
         send_msg(g_qid_send, SHOW_MSG, "use h for help\n");
     }
