@@ -222,6 +222,41 @@ bool find_and_push_val(lua_State *L, std::string param, lua_Debug *entry) {
     return find;
 }
 
+int get_input_val(std::string inputstr, std::map<std::string, int> &inputval, std::string &leftstr) {
+
+    std::string str = inputstr;
+
+    std::size_t left = str.find_first_of("[");
+    std::size_t right = str.find_first_of("]");
+    if (left == std::string::npos || right == std::string::npos || left >= right || left != 0) {
+        return -1;
+    }
+    std::string inputvals = str.substr(left + 1, right - 1);
+
+    inputstr.erase(0, right + 1);
+
+    inputval.clear();
+    std::string delimiter = ",";
+    size_t pos = 0;
+    while ((pos = inputvals.find(delimiter)) != std::string::npos) {
+        std::string token = inputvals.substr(0, pos);
+        token.erase(0, token.find_first_not_of(" "));
+        token.erase(token.find_last_not_of(" ") + 1);
+        if (token != "") {
+            inputval[token] = 1;
+        }
+        inputvals.erase(0, pos + delimiter.length());
+    }
+    inputvals.erase(0, inputvals.find_first_not_of(" "));
+    inputvals.erase(inputvals.find_last_not_of(" ") + 1);
+    if (inputvals != "") {
+        inputval[inputvals] = 1;
+    }
+
+    leftstr = inputstr;
+    return 0;
+}
+
 int process_b_command(lua_State *L, const std::vector <std::string> &result, char data[QUEUED_MESSAGE_MSG_LEN]) {
     std::string file;
     std::string linestr;
@@ -371,34 +406,13 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
     std::string iffunc = "";
     std::vector <std::string> iffuncparam;
     if (ifparam != "") {
-        std::string str = ifparam;
-        std::size_t left = str.find_first_of("[");
-        std::size_t right = str.find_first_of("]");
-        if (left == std::string::npos || right == std::string::npos || left >= right || left != 0) {
+        std::string leftstr = "";
+        std::map<std::string, int> inputval;
+        if (get_input_val(ifparam, inputval, leftstr) != 0) {
             send_msg(g_qid_send, SHOW_MSG, "eg: b test.lua:33 if [a,b] a + b == 10 ");
             return 0;
         }
-        std::string inputvals = str.substr(left + 1, right - 1);
-
-        ifparam.erase(0, right + 1);
-
-        std::map<std::string, int> inputval;
-        std::string delimiter = ",";
-        size_t pos = 0;
-        while ((pos = inputvals.find(delimiter)) != std::string::npos) {
-            std::string token = inputvals.substr(0, pos);
-            token.erase(0, token.find_first_not_of(" "));
-            token.erase(token.find_last_not_of(" ") + 1);
-            if (token != "") {
-                inputval[token] = 1;
-            }
-            inputvals.erase(0, pos + delimiter.length());
-        }
-        inputvals.erase(0, inputvals.find_first_not_of(" "));
-        inputvals.erase(inputvals.find_last_not_of(" ") + 1);
-        if (inputvals != "") {
-            inputval[inputvals] = 1;
-        }
+        ifparam = leftstr;
 
         int oldn = lua_gettop(L);
         std::string loadstr = "function dlua_debug_if" + std::to_string(maxno + 1) + "(";
