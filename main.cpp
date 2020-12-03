@@ -11,18 +11,20 @@ int g_int;
 std::string g_command = "";
 std::string g_last_command = "";
 int g_quit;
+const std::string g_lua_hook_func = "luaD_precall";
 
 int usage() {
     printf("dlua: pid\n");
     return -1;
 }
 
-long long find_luastate() {
-    DLOG("find_luastate start %d", g_pid);
+long long find_luastate_pstack() {
+    DLOG("find_luastate_pstack start %d", g_pid);
 
     int out = 0;
     char cmd[256] = {0};
-    snprintf(cmd, sizeof(cmd), "pstack %d | grep \"in luaV_execute\" | grep \"=0x[0-9abcdef]*\" -o | head -n 1", g_pid);
+    snprintf(cmd, sizeof(cmd), "pstack %d | grep \"in %s\" | grep \"=0x[0-9abcdef]*\" -o | head -n 1", g_pid,
+             g_lua_hook_func.c_str());
     std::string ret = exec_command(cmd, out);
     if (out != 0) {
         DLOG("exec_command fail pid %d command %s", g_pid, cmd);
@@ -39,6 +41,84 @@ long long find_luastate() {
     long long lvalue = strtoll(lstroct.c_str(), NULL, 16);
 
     return lvalue;
+}
+
+long long find_luastate_breakpoint() {
+    DLOG("find_luastate_breakpoint start %d", g_pid);
+
+    // check has g_lua_hook_func
+    {
+        int out = 0;
+        char cmd[256] = {0};
+        snprintf(cmd, sizeof(cmd), "pstack %d", g_pid);
+        std::string ret = exec_command(cmd, out);
+        if (out != 0) {
+            DLOG("exec_command fail pid %d command %s", g_pid, cmd);
+            return -1;
+        }
+
+        if (ret.find("in " + g_lua_hook_func) == std::string::npos) {
+            DLOG("exec_command ret %s no keyword", ret);
+            return -1;
+        }
+    }
+
+    std::string funcaddrvalue = "";
+    // get g_lua_hook_func func addr
+    {
+        int out = 0;
+        char cmd[256] = {0};
+        snprintf(cmd, sizeof(cmd), "gdb -p %d -ex \"p (long)%s\" --batch", g_pid, g_lua_hook_func.c_str());
+        std::string ret = exec_command(cmd, out);
+        if (out != 0) {
+            DLOG("exec_command fail pid %d command %s", g_pid, cmd);
+            return -1;
+        }
+
+        std::string key = "$1 = ";
+        int left = ret.find(key);
+        if (left == std::string::npos) {
+            DLOG("exec_command ret %s no keyword", ret);
+            return -1;
+        }
+
+        ret = ret.substr(left + key.length());
+        ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
+        ret.erase(std::remove(ret.begin(), ret.end(), ' '), ret.end());
+        DLOG("func addr ret %s", ret);
+
+        funcaddrvalue = ret;
+    }
+
+    long long lvalue = -1;
+    // get g_lua_hook_func func param
+    {
+        int out = 0;
+        char cmd[256] = {0};
+        snprintf(cmd, sizeof(cmd), "./hookso argp %d %s 1", g_pid, funcaddrvalue.c_str());
+        std::string ret = exec_command(cmd, out);
+        if (out != 0) {
+            DERR("exec_command fail pid %d command %s", g_pid, cmd);
+            return -1;
+        }
+        ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
+        DLOG("exec_command hookso call ret %s", ret.c_str());
+
+        lvalue = strtoll(ret.c_str(), NULL, 10);
+    }
+
+    return lvalue;
+}
+
+long long find_luastate() {
+    long long ret = -1;
+    if (ret == -1) {
+        ret = find_luastate_pstack();
+    }
+    if (ret == -1) {
+        ret = find_luastate_breakpoint();
+    }
+    return ret;
 }
 
 int fini_env() {
