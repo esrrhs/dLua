@@ -5,26 +5,26 @@ int g_qid_send;
 int g_pid;
 std::string g_sohandle = "";
 std::string g_lstr = "";
-const int MAX_FIND_WAIT_SECONDS = 10;
+const int MAX_FIND_WAIT_SECONDS = 20;
 const int MAX_CONN_WAIT_SECONDS = 10;
 int g_int;
 std::string g_command = "";
 std::string g_last_command = "";
 int g_quit;
-const std::string g_lua_hook_func = "luaD_precall";
+const std::vector <std::string> g_lua_hook_func = {"luaV_execute", "luaD_call", "luaD_precall"};
 
 int usage() {
     printf("dlua: pid\n");
     return -1;
 }
 
-long long find_luastate_pstack() {
+long long find_luastate_pstack(std::string hook_func) {
     DLOG("find_luastate_pstack start %d", g_pid);
 
     int out = 0;
     char cmd[256] = {0};
     snprintf(cmd, sizeof(cmd), "pstack %d | grep \"in %s\" | grep \"=0x[0-9abcdef]*\" -o | head -n 1", g_pid,
-             g_lua_hook_func.c_str());
+             hook_func.c_str());
     std::string ret = exec_command(cmd, out);
     if (out != 0) {
         DLOG("exec_command fail pid %d command %s", g_pid, cmd);
@@ -43,15 +43,15 @@ long long find_luastate_pstack() {
     return lvalue;
 }
 
-long long find_luastate_breakpoint() {
+long long find_luastate_breakpoint(std::string hook_func) {
     DLOG("find_luastate_breakpoint start %d", g_pid);
 
     std::string funcaddrvalue = "";
-    // get g_lua_hook_func func addr
+    // get hook_func func addr
     {
         int out = 0;
         char cmd[256] = {0};
-        snprintf(cmd, sizeof(cmd), "gdb -p %d -ex \"p (long)%s\" --batch", g_pid, g_lua_hook_func.c_str());
+        snprintf(cmd, sizeof(cmd), "gdb -p %d -ex \"p (long)%s\" --batch", g_pid, hook_func.c_str());
         std::string ret = exec_command(cmd, out);
         if (out != 0) {
             DLOG("exec_command fail pid %d command %s", g_pid, cmd);
@@ -64,8 +64,14 @@ long long find_luastate_breakpoint() {
             DLOG("exec_command ret %s no keyword", ret.c_str());
             return -1;
         }
+        ret = ret.substr(left);
+        int right = ret.find("\n");
+        if (right == std::string::npos) {
+            ret = ret.substr(key.length());
+        } else {
+            ret = ret.substr(key.length(), right - (left + key.length()));
+        }
 
-        ret = ret.substr(left + key.length());
         ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
         ret.erase(std::remove(ret.begin(), ret.end(), ' '), ret.end());
         DLOG("func addr ret %s", ret.c_str());
@@ -74,14 +80,14 @@ long long find_luastate_breakpoint() {
     }
 
     long long lvalue = -1;
-    // get g_lua_hook_func func param
+    // get hook_func func param
     {
         int out = 0;
         char cmd[256] = {0};
-        snprintf(cmd, sizeof(cmd), "./hookso argp %d %s 1", g_pid, funcaddrvalue.c_str());
+        snprintf(cmd, sizeof(cmd), "timeout 1 ./hookso argp %d %s 1", g_pid, funcaddrvalue.c_str());
         std::string ret = exec_command(cmd, out);
         if (out != 0) {
-            DERR("exec_command fail pid %d command %s", g_pid, cmd);
+            DLOG("exec_command fail pid %d command %s", g_pid, cmd);
             return -1;
         }
         ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
@@ -95,11 +101,15 @@ long long find_luastate_breakpoint() {
 
 long long find_luastate() {
     long long ret = -1;
-    if (ret == -1) {
-        ret = find_luastate_pstack();
+    for (int i = 0; i < g_lua_hook_func.size(); ++i) {
+        if (ret == -1) {
+            //ret = find_luastate_pstack(g_lua_hook_func[i]);
+        }
     }
-    if (ret == -1) {
-        ret = find_luastate_breakpoint();
+    for (int i = 0; i < g_lua_hook_func.size(); ++i) {
+        if (ret == -1) {
+            ret = find_luastate_breakpoint(g_lua_hook_func[i]);
+        }
     }
     return ret;
 }
