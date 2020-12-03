@@ -8,6 +8,7 @@
 * gdb风格的调试指令，包括设置条件断点、查看变量、设置变量
 
 # 编译
+* 下载编译安装[lua](https://www.lua.org/download.html)
 * 用脚本编译dlua，生成```dlua```与```dluaagent.so```，```dlua```是控制台，```dluaagent.so```是调试插件
 ```
 # ./build.sh
