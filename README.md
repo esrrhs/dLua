@@ -91,7 +91,7 @@ b string_time_to_unix_time_with_tz
 ```
 b _G.test.getweekstart_by_tz_test
 ```
-条件断点，方括号的tz表示需要的参数
+条件断点，方括号的tz表示需要的参数，作为输入参与到后面的表达式计算
 ```
 b string_time_to_unix_time_with_tz if [tz] tz==800
 ```
@@ -142,9 +142,9 @@ p year
 ```
 p _G.test
 ```
-或者复杂的，查看table中的某一项
+或者复杂的，查看table中的某一项，[]表示需要传入的变量，作为输入参与到后面的表达式计算
 ```
-p [tmp] tmp[1]
+p [tmp] tmp.abc
 ```
 ### l
 查看当前栈的附近代码，如
@@ -172,7 +172,7 @@ set year=1234
 ```
 r print(123)
 ```
-运行复杂代码，加上变量
+运行复杂代码，加上变量，[]表示需要传入的变量，作为输入参与到后面的表达式计算
 ```
 r [tmp] tmp[1]=2
 ```
