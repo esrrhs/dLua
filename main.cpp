@@ -58,7 +58,7 @@ long long find_luastate_breakpoint() {
         }
 
         if (ret.find("in " + g_lua_hook_func) == std::string::npos) {
-            DLOG("exec_command ret %s no keyword", ret);
+            DLOG("exec_command ret %s no keyword", ret.c_str());
             return -1;
         }
     }
@@ -78,14 +78,14 @@ long long find_luastate_breakpoint() {
         std::string key = "$1 = ";
         int left = ret.find(key);
         if (left == std::string::npos) {
-            DLOG("exec_command ret %s no keyword", ret);
+            DLOG("exec_command ret %s no keyword", ret.c_str());
             return -1;
         }
 
         ret = ret.substr(left + key.length());
         ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
         ret.erase(std::remove(ret.begin(), ret.end(), ' '), ret.end());
-        DLOG("func addr ret %s", ret);
+        DLOG("func addr ret %s", ret.c_str());
 
         funcaddrvalue = ret;
     }
