@@ -103,7 +103,7 @@ long long find_luastate() {
     long long ret = -1;
     for (int i = 0; i < g_lua_hook_func.size(); ++i) {
         if (ret == -1) {
-            //ret = find_luastate_pstack(g_lua_hook_func[i]);
+            ret = find_luastate_pstack(g_lua_hook_func[i]);
         }
     }
     for (int i = 0; i < g_lua_hook_func.size(); ++i) {
