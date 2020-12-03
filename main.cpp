@@ -69,7 +69,7 @@ long long find_luastate_breakpoint(std::string hook_func) {
         if (right == std::string::npos) {
             ret = ret.substr(key.length());
         } else {
-            ret = ret.substr(key.length(), right - (left + key.length()));
+            ret = ret.substr(key.length(), right - key.length());
         }
 
         ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
