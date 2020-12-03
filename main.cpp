@@ -46,23 +46,6 @@ long long find_luastate_pstack() {
 long long find_luastate_breakpoint() {
     DLOG("find_luastate_breakpoint start %d", g_pid);
 
-    // check has g_lua_hook_func
-    {
-        int out = 0;
-        char cmd[256] = {0};
-        snprintf(cmd, sizeof(cmd), "pstack %d", g_pid);
-        std::string ret = exec_command(cmd, out);
-        if (out != 0) {
-            DLOG("exec_command fail pid %d command %s", g_pid, cmd);
-            return -1;
-        }
-
-        if (ret.find("in " + g_lua_hook_func) == std::string::npos) {
-            DLOG("exec_command ret %s no keyword", ret.c_str());
-            return -1;
-        }
-    }
-
     std::string funcaddrvalue = "";
     // get g_lua_hook_func func addr
     {
