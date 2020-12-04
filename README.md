@@ -1,4 +1,9 @@
-# dlua
+# dLua
+
+[<img src="https://img.shields.io/github/license/esrrhs/dLua">](https://github.com/esrrhs/dLua)
+[<img src="https://img.shields.io/github/languages/top/esrrhs/dLua">](https://github.com/esrrhs/dLua)
+[<img src="https://img.shields.io/github/workflow/status/esrrhs/dLua/CI">](https://github.com/esrrhs/dLua/actions)
+
 类似gdb的lua调试器
 
 # 特性
