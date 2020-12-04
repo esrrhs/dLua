@@ -41,6 +41,14 @@ int g_step_last_line;
 int g_step_last_level;
 int g_step_debug_level;
 
+
+extern "C" int is_stop_agent() {
+    if (g_opening == RUNNING_STATE_STOP) {
+        return 1;
+    }
+    return 0;
+}
+
 extern "C" int stop_agent() {
 
     if (g_opening == RUNNING_STATE_STOP) {
@@ -627,6 +635,8 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
 
     std::string param = input;
 
+    DLOG("process_p_command start %s", param.c_str());
+
     lua_Debug entry;
     memset(&entry, 0, sizeof(entry));
     if (lua_getstack(L, g_step_debug_level, &entry) <= 0) {
@@ -638,6 +648,8 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
     }
 
     int oldn = lua_gettop(L);
+
+    DLOG("process_p_command oldn %d", oldn);
 
     const char *loadstr = "function dlua_tprint (tbl, indent, visit, path, max)\n"
                           "    if not indent then\n"

@@ -56,4 +56,6 @@ while true do
     local begin_time4 = string_time_to_unix_time_with_tz("2020-11-02 00:00:00", -800)
     getweekstart_by_tz(begin_time4, 0)
 
+    os.execute("usleep 100")
+
 end
