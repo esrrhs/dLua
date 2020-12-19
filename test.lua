@@ -1,4 +1,4 @@
-_G.test = { "test1", "test2", "test3" }
+_G.test = { "test1", "test2", "test3", "a\tb\tc" }
 test123 = { "test123" }
 
 function _G.test.getweekstart_by_tz_test(time, tz)

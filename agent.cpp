@@ -196,20 +196,20 @@ int process_bt_command(lua_State *L) {
     return 0;
 }
 
-bool find_and_push_val(lua_State *L, std::string param, lua_Debug *entry) {
+bool find_and_push_val(lua_State *L, std::string param, int level) {
 
     int oldn = lua_gettop(L);
 
     DLOG("find_and_push_val oldn %d", oldn);
 
     if (g_load_getvar_string == 0) {
-        const char *loadstr = "function dlua_getvarvalue (name)\n"
+        const char *loadstr = "function dlua_getvarvalue (name, frame)\n"
                               "    local value, found\n"
                               "\n"
                               "    -- try local variables\n"
                               "    local i = 1\n"
                               "    while true do\n"
-                              "        local n, v = debug.getlocal(2, i)\n"
+                              "        local n, v = debug.getlocal(frame + 2, i)\n"
                               "        if not n then\n"
                               "            break\n"
                               "        end\n"
@@ -224,7 +224,7 @@ bool find_and_push_val(lua_State *L, std::string param, lua_Debug *entry) {
                               "    end\n"
                               "\n"
                               "    -- try upvalues\n"
-                              "    local func = debug.getinfo(2).func\n"
+                              "    local func = debug.getinfo(frame + 2).func\n"
                               "    i = 1\n"
                               "    while true do\n"
                               "        local n, v = debug.getupvalue(func, i)\n"
@@ -253,7 +253,8 @@ bool find_and_push_val(lua_State *L, std::string param, lua_Debug *entry) {
     }
 
     lua_pushstring(L, param.c_str());
-    lua_pcall(L, 1, 2, 0);
+    lua_pushinteger(L, level);
+    lua_pcall(L, 2, 2, 0);
 
     int newn = lua_gettop(L);
     if (newn > oldn) {
@@ -784,7 +785,7 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
         }
 
         for (auto it = inputval.begin(); it != inputval.end(); it++) {
-            if (!find_and_push_val(L, it->first, &entry)) {
+            if (!find_and_push_val(L, it->first, g_step_debug_level)) {
                 lua_settop(L, oldn);
                 send_msg(g_qid_send, SHOW_MSG, (std::string("can not find val ") + it->first).c_str());
                 return 0;
@@ -796,7 +797,7 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
         lua_pcall(L, 1, 1, 0);
     } else {
         // p aa
-        bool find = find_and_push_val(L, param, &entry);
+        bool find = find_and_push_val(L, param, g_step_debug_level);
         if (!find) {
             std::string tmp = "return dlua_pprint(" + param + ")";
             luaL_dostring(L, tmp.c_str());
@@ -1083,7 +1084,7 @@ int process_r_command(lua_State *L, const std::vector <std::string> &result, cha
         }
 
         for (auto it = inputval.begin(); it != inputval.end(); it++) {
-            if (!find_and_push_val(L, it->first, &entry)) {
+            if (!find_and_push_val(L, it->first, g_step_debug_level)) {
                 lua_settop(L, oldn);
                 send_msg(g_qid_send, SHOW_MSG, (std::string("can not find val ") + it->first).c_str());
                 return 0;
@@ -1230,7 +1231,7 @@ int check_bp(lua_State *L) {
                 lua_getglobal(L, g_blist[i].iffunc.c_str());
                 if (lua_isfunction(L, -1)) {
                     for (int j = 0; j < g_blist[i].iffuncparam.size(); ++j) {
-                        if (!find_and_push_val(L, g_blist[i].iffuncparam[j], &entry)) {
+                        if (!find_and_push_val(L, g_blist[i].iffuncparam[j], 0)) {
                             ini_ok = false;
                             break;
                         }
