@@ -40,7 +40,8 @@ std::string g_step_last_func = "";
 int g_step_last_line;
 int g_step_last_level;
 int g_step_debug_level;
-
+int g_load_pprint_string;
+int g_load_getvar_string;
 
 extern "C" int is_stop_agent() {
     if (g_opening == RUNNING_STATE_STOP) {
@@ -132,6 +133,8 @@ int ini_agent() {
     g_step_last_line = 0;
     g_step_last_level = 0;
     g_step_debug_level = 0;
+    g_load_pprint_string = 0;
+    g_load_getvar_string = 0;
 
     DLOG("ini_agent ok %d", g_pid);
 
@@ -194,41 +197,78 @@ int process_bt_command(lua_State *L) {
 }
 
 bool find_and_push_val(lua_State *L, std::string param, lua_Debug *entry) {
-    bool find = false;
-    int index = 1;
-    while (1) {
-        const char *name = lua_getlocal(L, entry, index);
-        if (!name) {
-            break;
-        }
-        if (param == name) {
-            find = true;
-            DLOG("find local %s", name);
-            break;
-        } else {
-            lua_pop(L, 1);
-        }
-        index++;
+
+    int oldn = lua_gettop(L);
+
+    DLOG("find_and_push_val oldn %d", oldn);
+
+    if (g_load_getvar_string == 0) {
+        const char *loadstr = "function dlua_getvarvalue (name)\n"
+                              "    local value, found\n"
+                              "\n"
+                              "    -- try local variables\n"
+                              "    local i = 1\n"
+                              "    while true do\n"
+                              "        local n, v = debug.getlocal(2, i)\n"
+                              "        if not n then\n"
+                              "            break\n"
+                              "        end\n"
+                              "        if n == name then\n"
+                              "            value = v\n"
+                              "            found = true\n"
+                              "        end\n"
+                              "        i = i + 1\n"
+                              "    end\n"
+                              "    if found then\n"
+                              "        return value, true\n"
+                              "    end\n"
+                              "\n"
+                              "    -- try upvalues\n"
+                              "    local func = debug.getinfo(2).func\n"
+                              "    i = 1\n"
+                              "    while true do\n"
+                              "        local n, v = debug.getupvalue(func, i)\n"
+                              "        if not n then\n"
+                              "            break\n"
+                              "        end\n"
+                              "        if n == name then\n"
+                              "            return v, true\n"
+                              "        end\n"
+                              "        i = i + 1\n"
+                              "    end\n"
+                              "\n"
+                              "    return nil, false\n"
+                              "end\n"
+                              "";
+
+        luaL_dostring(L, loadstr);
+        lua_settop(L, oldn);
+        g_load_getvar_string = 1;
     }
 
-    if (!find) {
-        index = 1;
-        while (1) {
-            const char *name = lua_getupvalue(L, -1, index);
-            if (!name) {
-                break;
-            }
-            if (param == name) {
-                find = true;
-                DLOG("find upvalue %s", name);
-                break;
-            } else {
-                lua_pop(L, 1);
-            }
-            index++;
-        }
+    lua_getglobal(L, "dlua_getvarvalue");
+    if (!lua_isfunction(L, -1)) {
+        lua_settop(L, oldn);
+        return false;
     }
-    return find;
+
+    lua_pushstring(L, param.c_str());
+    lua_pcall(L, 1, 2, 0);
+
+    int newn = lua_gettop(L);
+    if (newn > oldn) {
+        bool ret = lua_toboolean(L, -1);
+        if (ret) {
+            lua_pop(L, 1);
+            return true;
+        } else {
+            lua_settop(L, oldn);
+            return false;
+        }
+    } else {
+        lua_settop(L, oldn);
+        return false;
+    }
 }
 
 int get_input_val(std::string inputstr, std::map<std::string, int> &inputval, std::string &leftstr) {
@@ -651,53 +691,57 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
 
     DLOG("process_p_command oldn %d", oldn);
 
-    const char *loadstr = "function dlua_tprint (tbl, indent, visit, path, max)\n"
-                          "    if not indent then\n"
-                          "        indent = 0\n"
-                          "    end\n"
-                          "    local ret = \"\"\n"
-                          "    for k, v in pairs(tbl) do\n"
-                          "        if type(v) ~= \"function\" and type(v) ~= \"userdata\" and type(v) ~= \"thread\" then\n"
-                          "            local formatting = string.rep(\"  \", indent) .. k .. \": \"\n"
-                          "            if type(v) == \"table\" then\n"
-                          "                if visit[v] then\n"
-                          "                    ret = ret .. formatting .. \"*Recursion at \" .. visit[v] .. \"*\\n\"\n"
-                          "                else\n"
-                          "                    visit[v] = path .. \"/\" .. tostring(k)\n"
-                          "                    ret = ret .. formatting .. \"\\n\" .. dlua_tprint(v, indent + 1, visit, path .. \"/\" .. tostring(k), max)\n"
-                          "                end\n"
-                          "            elseif type(v) == 'boolean' or type(v) == 'number' then\n"
-                          "                ret = ret .. formatting .. tostring(v) .. \"\\n\"\n"
-                          "            elseif type(v) == 'string' then\n"
-                          "                ret = ret .. formatting .. \"'\" .. tostring(v) .. \"'\" .. \"\\n\"\n"
-                          "            end\n"
-                          "            if #ret > max then\n"
-                          "                break\n"
-                          "            end\n"
-                          "        end\n"
-                          "    end\n"
-                          "    return ret\n"
-                          "end\n"
-                          "\n"
-                          "function dlua_pprint (tbl)\n"
-                          "    local path = \"\"\n"
-                          "    local visit = {}\n"
-                          "    if type(tbl) ~= \"table\" then\n"
-                          "        return tostring(tbl)\n"
-                          "    end\n"
-                          "    local max = 1024 * 1024\n"
-                          "    local ret = dlua_tprint(tbl, 0, visit, path, max)\n"
-                          "    if #ret > max then\n"
-                          "        ret = ret .. \"...\"\n"
-                          "    end\n"
-                          "    return ret\n"
-                          "end\n"
-                          "return _G.dlua_pprint(\"ok\")";
+    if (g_load_pprint_string == 0) {
+        const char *loadstr = "function dlua_tprint (tbl, indent, visit, path, max)\n"
+                              "    if not indent then\n"
+                              "        indent = 0\n"
+                              "    end\n"
+                              "    local ret = \"\"\n"
+                              "    for k, v in pairs(tbl) do\n"
+                              "        if type(v) ~= \"function\" and type(v) ~= \"userdata\" and type(v) ~= \"thread\" then\n"
+                              "            local formatting = string.rep(\"  \", indent) .. tostring(k) .. \": \"\n"
+                              "            if type(v) == \"table\" then\n"
+                              "                if visit[v] then\n"
+                              "                    ret = ret .. formatting .. \"*Recursion at \" .. visit[v] .. \"*\\n\"\n"
+                              "                else\n"
+                              "                    visit[v] = path .. \"/\" .. tostring(k)\n"
+                              "                    ret = ret .. formatting .. \"\\n\" .. dlua_tprint(v, indent + 1, visit, path .. \"/\" .. tostring(k), max)\n"
+                              "                end\n"
+                              "            elseif type(v) == 'boolean' or type(v) == 'number' then\n"
+                              "                ret = ret .. formatting .. tostring(v) .. \"\\n\"\n"
+                              "            elseif type(v) == 'string' then\n"
+                              "                ret = ret .. formatting .. \"'\" .. tostring(v) .. \"'\" .. \"\\n\"\n"
+                              "            end\n"
+                              "            if #ret > max then\n"
+                              "                break\n"
+                              "            end\n"
+                              "        end\n"
+                              "    end\n"
+                              "    return ret\n"
+                              "end\n"
+                              "\n"
+                              "function dlua_pprint (tbl)\n"
+                              "    local path = \"\"\n"
+                              "    local visit = {}\n"
+                              "    if type(tbl) ~= \"table\" then\n"
+                              "        return tostring(tbl)\n"
+                              "    end\n"
+                              "    local max = 1024 * 1024\n"
+                              "    local ret = dlua_tprint(tbl, 0, visit, path, max)\n"
+                              "    if #ret > max then\n"
+                              "        ret = ret .. \"...\"\n"
+                              "    end\n"
+                              "    return ret\n"
+                              "end\n"
+                              "return _G.dlua_pprint(\"ok\")";
 
-    luaL_dostring(L, loadstr);
-    std::string ret = lua_tostring(L, -1);
-    lua_settop(L, oldn);
-    DLOG("luaL_dostring ret %s", ret.c_str());
+        luaL_dostring(L, loadstr);
+        std::string ret = lua_tostring(L, -1);
+        lua_settop(L, oldn);
+        DLOG("luaL_dostring ret %s", ret.c_str());
+        g_load_pprint_string = 1;
+    }
+
     lua_getglobal(L, "dlua_pprint");
     if (!lua_isfunction(L, -1)) {
         lua_settop(L, oldn);

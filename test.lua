@@ -44,6 +44,13 @@ end
 
 while true do
 
+    local x = 0
+    local f = function()
+        x = x + 1
+        return x
+    end
+    local xx = f()
+
     local begin_time1 = string_time_to_unix_time("2020-11-02 00:00:00")
     getweekstart_by_tz(begin_time1, 0)
 
