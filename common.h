@@ -123,7 +123,7 @@ static int open_msg_queue(const char *tmpfilename, int pid) {
 
     int qid = msgget(key, 0666 | IPC_CREAT);
     if (qid < 0) {
-        DERR("msgget fail %s %d %s", key, errno, strerror(errno));
+        DERR("msgget fail %d %d %s", key, errno, strerror(errno));
         return -1;
     }
 
