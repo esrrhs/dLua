@@ -1,5 +1,6 @@
 _G.test = { "test1", "test2", "test3", "a\tb\tc" }
 test123 = { "test123" }
+local test124 = 1
 
 function _G.test.getweekstart_by_tz_test(time, tz)
     local tz_tmp = 259200 + tz * 36
@@ -29,6 +30,10 @@ end
 function string_time_to_unix_time_with_tz(s, tz)
     if not s or string.len(s) == 0 then
         return 0;
+    end
+
+    if test124 then
+        test124 = test124 + 1
     end
 
     local p = "(%d+)-(%d+)-(%d+) (%d+):(%d+):(%d+)";

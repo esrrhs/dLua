@@ -42,6 +42,7 @@ int g_step_last_level;
 int g_step_debug_level;
 int g_load_pprint_string;
 int g_load_getvar_string;
+int g_load_setvar_string;
 
 extern "C" int is_stop_agent() {
     if (g_opening == RUNNING_STATE_STOP) {
@@ -135,6 +136,7 @@ int ini_agent() {
     g_step_debug_level = 0;
     g_load_pprint_string = 0;
     g_load_getvar_string = 0;
+    g_load_setvar_string = 0;
 
     DLOG("ini_agent ok %d", g_pid);
 
@@ -971,20 +973,59 @@ int process_set_command(lua_State *L, const std::vector <std::string> &result, c
 
     DLOG("process_set_command set %s to %s", val.c_str(), input.c_str());
 
-    lua_Debug entry;
-    memset(&entry, 0, sizeof(entry));
-    if (lua_getstack(L, g_step_debug_level, &entry) <= 0) {
-        return 0;
-    }
-    int status = lua_getinfo(L, "Sln", &entry);
-    if (status <= 0) {
-        return 0;
-    }
-
     int oldn = lua_gettop(L);
 
-    std::string loadstr = "return " + input;
-    status = luaL_dostring(L, loadstr.c_str());
+    if (g_load_setvar_string == 0) {
+        const char *loadstr = "function dlua_setvarvalue (name, frame, val)\n"
+                              "    local found\n"
+                              "\n"
+                              "    -- try local variables\n"
+                              "    local i = 1\n"
+                              "    while true do\n"
+                              "        local n, v = debug.getlocal(frame + 3, i)\n"
+                              "        if not n then\n"
+                              "            break\n"
+                              "        end\n"
+                              "        if n == name then\n"
+                              "            debug.setlocal(frame + 3, i, val)\n"
+                              "            found = true\n"
+                              "        end\n"
+                              "        i = i + 1\n"
+                              "    end\n"
+                              "    if found then\n"
+                              "        return true\n"
+                              "    end\n"
+                              "\n"
+                              "    -- try upvalues\n"
+                              "    local func = debug.getinfo(frame + 3).func\n"
+                              "    i = 1\n"
+                              "    while true do\n"
+                              "        local n, v = debug.getupvalue(func, i)\n"
+                              "        if not n then\n"
+                              "            break\n"
+                              "        end\n"
+                              "        if n == name then\n"
+                              "            debug.setupvalue(func, i, val)\n"
+                              "            return true\n"
+                              "        end\n"
+                              "        i = i + 1\n"
+                              "    end\n"
+                              "\n"
+                              "    return false\n"
+                              "end"
+                              "";
+
+        luaL_dostring(L, loadstr);
+        lua_settop(L, oldn);
+        g_load_setvar_string = 1;
+    }
+
+    std::string loadstr =
+            "if not dlua_setvarvalue(\"" + val + "\"," + std::to_string(g_step_debug_level) + "," + input + ") then\n";
+    loadstr += val + "=" + input + "\n";
+    loadstr += "print(debug.traceback())\n";
+    loadstr += "end\n";
+    int status = luaL_dostring(L, loadstr.c_str());
     if (status != 0) {
         std::string ret = lua_tostring(L, -1);
         lua_settop(L, oldn);
@@ -994,48 +1035,7 @@ int process_set_command(lua_State *L, const std::vector <std::string> &result, c
 
     DLOG("luaL_dostring ret ok");
 
-    bool find = false;
-    int index = 1;
-    while (1) {
-        const char *name = lua_getlocal(L, &entry, index);
-        if (!name) {
-            break;
-        }
-        lua_pop(L, 1);
-        if (val == name) {
-            find = true;
-            DLOG("find local %s", name);
-            lua_setlocal(L, &entry, index);
-            break;
-        }
-        index++;
-    }
-
-    if (!find) {
-        index = 1;
-        while (1) {
-            const char *name = lua_getupvalue(L, -1, index);
-            if (!name) {
-                break;
-            }
-            lua_pop(L, 1);
-            if (val == name) {
-                find = true;
-                DLOG("find upvalue %s", name);
-                lua_setupvalue(L, -1, index);
-                break;
-            }
-            index++;
-        }
-    }
-
-    if (!find) {
-        std::string tmp = "can not find val " + val;
-        send_msg(g_qid_send, SHOW_MSG, tmp.c_str());
-    } else {
-        send_msg(g_qid_send, SHOW_MSG, "set ok");
-    }
-
+    send_msg(g_qid_send, SHOW_MSG, "set ok");
     lua_settop(L, oldn);
 
     return 0;
