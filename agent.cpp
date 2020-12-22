@@ -1023,7 +1023,6 @@ int process_set_command(lua_State *L, const std::vector <std::string> &result, c
     std::string loadstr =
             "if not dlua_setvarvalue(\"" + val + "\"," + std::to_string(g_step_debug_level) + "," + input + ") then\n";
     loadstr += val + "=" + input + "\n";
-    loadstr += "print(debug.traceback())\n";
     loadstr += "end\n";
     int status = luaL_dostring(L, loadstr.c_str());
     if (status != 0) {
