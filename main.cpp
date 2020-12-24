@@ -107,7 +107,7 @@ int fini_env() {
     {
         int out = 0;
         char cmd[256] = {0};
-        snprintf(cmd, sizeof(cmd), "./hookso call %d dluaagent.so stop_agent i=%s i=%d", g_pid, g_lstr.c_str(), g_pid);
+        snprintf(cmd, sizeof(cmd), "./hookso call %d dluaagent.so stop_agent", g_pid);
         std::string ret = exec_command(cmd, out);
         if (out != 0) {
             DERR("exec_command fail pid %d command %s", g_pid, cmd);
