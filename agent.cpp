@@ -962,6 +962,17 @@ int process_set_command(lua_State *L, const std::vector <std::string> &result, c
     input.erase(0, input.find_first_not_of(" "));
     input.erase(input.find_last_not_of(" ") + 1);
 
+    std::map<std::string, int> inputval;
+    if (result.size() >= 3 && input.length() > 0 && input[0] == '[') {
+        // set [a] a.t = 123
+        std::string leftstr;
+        if (get_input_val(input, inputval, leftstr) != 0) {
+            send_msg(g_qid_send, SHOW_MSG, "eg: set [t] t.a=1");
+            return 0;
+        }
+        input = leftstr;
+    }
+
     std::string delimiter = "=";
     size_t pos = input.find(delimiter);
     if (pos == std::string::npos) {
@@ -971,23 +982,28 @@ int process_set_command(lua_State *L, const std::vector <std::string> &result, c
     std::string val = input.substr(0, pos);
     input.erase(0, pos + delimiter.length());
 
+    val.erase(0, val.find_first_not_of(" "));
+    val.erase(val.find_last_not_of(" ") + 1);
+    input.erase(0, input.find_first_not_of(" "));
+    input.erase(input.find_last_not_of(" ") + 1);
+
     DLOG("process_set_command set %s to %s", val.c_str(), input.c_str());
 
     int oldn = lua_gettop(L);
 
     if (g_load_setvar_string == 0) {
-        const char *loadstr = "function dlua_setvarvalue (name, frame, val)\n"
+        const char *loadstr = "function dlua_setvarvalue (name, frame, val, level)\n"
                               "    local found\n"
                               "\n"
                               "    -- try local variables\n"
                               "    local i = 1\n"
                               "    while true do\n"
-                              "        local n, v = debug.getlocal(frame + 3, i)\n"
+                              "        local n, v = debug.getlocal(frame + level, i)\n"
                               "        if not n then\n"
                               "            break\n"
                               "        end\n"
                               "        if n == name then\n"
-                              "            debug.setlocal(frame + 3, i, val)\n"
+                              "            debug.setlocal(frame + level, i, val)\n"
                               "            found = true\n"
                               "        end\n"
                               "        i = i + 1\n"
@@ -997,7 +1013,7 @@ int process_set_command(lua_State *L, const std::vector <std::string> &result, c
                               "    end\n"
                               "\n"
                               "    -- try upvalues\n"
-                              "    local func = debug.getinfo(frame + 3).func\n"
+                              "    local func = debug.getinfo(frame + level).func\n"
                               "    i = 1\n"
                               "    while true do\n"
                               "        local n, v = debug.getupvalue(func, i)\n"
@@ -1020,16 +1036,119 @@ int process_set_command(lua_State *L, const std::vector <std::string> &result, c
         g_load_setvar_string = 1;
     }
 
-    std::string loadstr =
-            "if not dlua_setvarvalue(\"" + val + "\"," + std::to_string(g_step_debug_level) + "," + input + ") then\n";
-    loadstr += val + "=" + input + "\n";
-    loadstr += "end\n";
-    int status = luaL_dostring(L, loadstr.c_str());
-    if (status != 0) {
-        std::string ret = lua_tostring(L, -1);
+    if (inputval.empty()) {
+        std::string loadstr =
+                "if not dlua_setvarvalue(\"" + val + "\"," + std::to_string(g_step_debug_level) + "," + input + ", 3" +
+                ") then\n";
+        loadstr += val + "=" + input + "\n";
+        loadstr += "end\n";
+        int status = luaL_dostring(L, loadstr.c_str());
+        if (status != 0) {
+            std::string ret = lua_tostring(L, -1);
+            lua_settop(L, oldn);
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+            return 0;
+        }
+    } else {
+        std::string loadstr = "function dlua_set_val(";
+        for (auto it = inputval.begin(); it != inputval.end();) {
+            loadstr = loadstr + it->first;
+            it++;
+            if (it != inputval.end()) {
+                loadstr = loadstr + ",";
+            }
+        }
+        loadstr = loadstr + ")\n" + val + "=" + input + "\n";
+        loadstr = loadstr + "return ";
+        for (auto it = inputval.begin(); it != inputval.end();) {
+            loadstr = loadstr + it->first;
+            it++;
+            if (it != inputval.end()) {
+                loadstr = loadstr + ",";
+            }
+        }
+        loadstr = loadstr + "\n end\n";
+        DLOG("process_set_command p %s", loadstr.c_str());
+        int status = luaL_dostring(L, loadstr.c_str());
+        if (status != 0) {
+            std::string ret = lua_tostring(L, -1);
+            lua_settop(L, oldn);
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+            return 0;
+        }
+
         lua_settop(L, oldn);
-        send_msg(g_qid_send, SHOW_MSG, ret.c_str());
-        return 0;
+
+        lua_getglobal(L, "dlua_set_val");
+        if (!lua_isfunction(L, -1)) {
+            lua_settop(L, oldn);
+            send_msg(g_qid_send, SHOW_MSG, "get dlua_set_val fail\n");
+            return 0;
+        }
+
+        for (auto it = inputval.begin(); it != inputval.end(); it++) {
+            if (!find_and_push_val(L, it->first, g_step_debug_level)) {
+                lua_settop(L, oldn);
+                send_msg(g_qid_send, SHOW_MSG, (std::string("can not find val ") + it->first).c_str());
+                return 0;
+            }
+        }
+
+        DLOG("process_set_command oldn %d", oldn);
+        int ret = lua_pcall(L, inputval.size(), inputval.size(), 0);
+        if (ret != 0) {
+            std::string ret = lua_tostring(L, -1);
+            lua_settop(L, oldn);
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+            return 0;
+        }
+        DLOG("process_set_command newn %d", lua_gettop(L));
+        DLOG("process_set_command top %d", lua_isinteger(L, -1) > 0 ? lua_tointeger(L, -1) : -2020);
+
+        int index = -inputval.size();
+        for (auto it = inputval.begin(); it != inputval.end(); it++) {
+            std::string name = it->first;
+            int curoldn = lua_gettop(L);
+
+            lua_getglobal(L, "dlua_setvarvalue");
+            if (!lua_isfunction(L, -1)) {
+                lua_settop(L, oldn);
+                send_msg(g_qid_send, SHOW_MSG, "get dlua_setvarvalue fail\n");
+                return 0;
+            }
+
+            lua_pushstring(L, name.c_str());
+            lua_pushinteger(L, g_step_debug_level);
+            lua_pushnil(L);
+            lua_pushinteger(L, 2);
+            lua_copy(L, index - 5, -2);
+
+            DLOG("process_set_command calln %d", lua_gettop(L));
+            DLOG("process_set_command param1 %s", lua_isstring(L, -4) > 0 ? lua_tostring(L, -4) : "-2020");
+            DLOG("process_set_command param2 %d", lua_isinteger(L, -3) > 0 ? lua_tointeger(L, -3) : -2020);
+            DLOG("process_set_command param3 %d", lua_isinteger(L, -2) > 0 ? lua_tointeger(L, -2) : -2020);
+            DLOG("process_set_command param4 %d", lua_isinteger(L, -1) > 0 ? lua_tointeger(L, -1) : -2020);
+
+            ret = lua_pcall(L, 4, 1, 0);
+            if (ret != 0) {
+                std::string ret = lua_tostring(L, -1);
+                lua_settop(L, oldn);
+                send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+                return 0;
+            }
+
+            bool suc = lua_toboolean(L, -1);
+            if (!suc) {
+                lua_settop(L, oldn);
+                send_msg(g_qid_send, SHOW_MSG, (std::string("dlua_setvarvalue set ") + name + " fail").c_str());
+                return 0;
+            }
+
+            DLOG("process_set_command set back %s %d", name.c_str(), index);
+
+            lua_settop(L, curoldn);
+            index++;
+        }
     }
 
     DLOG("luaL_dostring ret ok");
@@ -1110,7 +1229,13 @@ int process_r_command(lua_State *L, const std::vector <std::string> &result, cha
             }
         }
 
-        lua_pcall(L, inputval.size(), 0, 0);
+        int ret = lua_pcall(L, inputval.size(), 0, 0);
+        if (ret != 0) {
+            std::string ret = lua_tostring(L, -1);
+            lua_settop(L, oldn);
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+            return 0;
+        }
         lua_settop(L, oldn);
     } else {
         std::string loadstr = "function dlua_r_val(";
@@ -1132,7 +1257,13 @@ int process_r_command(lua_State *L, const std::vector <std::string> &result, cha
             return 0;
         }
 
-        lua_pcall(L, 0, 0, 0);
+        int ret = lua_pcall(L, 0, 0, 0);
+        if (ret != 0) {
+            std::string ret = lua_tostring(L, -1);
+            lua_settop(L, oldn);
+            send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+            return 0;
+        }
         lua_settop(L, oldn);
     }
 
