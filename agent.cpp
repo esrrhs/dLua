@@ -1569,8 +1569,8 @@ extern "C" int start_agent(lua_State *L, int pid) {
     g_L = L;
 
     g_old_hook = lua_gethook(L);
-    g_old_hook_mask = lua_gethookcount(L);
-    g_old_hook_count = lua_gethookmask(L);
+    g_old_hook_count = lua_gethookcount(L);
+    g_old_hook_mask = lua_gethookmask(L);
 
     lua_sethook(L, hook_handler, LUA_MASKLINE, 0);
 
