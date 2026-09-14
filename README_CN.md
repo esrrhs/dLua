@@ -6,7 +6,7 @@
 
 类似 GDB 的 Linux 平台 Lua 动态调试器。
 
-[English Documentation](README.md) | [详细使用说明 (Usage Guide)](usage.md)
+[English Documentation](README.md) | [详细使用说明 (Usage Guide)](usage_CN.md)
 
 ---
 
