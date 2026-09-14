@@ -4,192 +4,259 @@
 [<img src="https://img.shields.io/github/languages/top/esrrhs/dLua">](https://github.com/esrrhs/dLua)
 [<img src="https://img.shields.io/github/actions/workflow/status/esrrhs/dLua/cmake.yml?branch=master">](https://github.com/esrrhs/dLua/actions)
 
-类似gdb的lua调试器
+A GDB-like dynamic debugger for Lua programs on Linux.
 
-# 特性
-* 支持Linux平台
-* C++编写
-* 通过附加到其他进程上，进行调试
-* gdb风格的调试指令，包括设置条件断点、查看变量、设置变量
+[中文文档 (Chinese)](README_CN.md)
 
-# 编译
-* 下载编译安装[lua](https://www.lua.org/download.html)
-* 用脚本编译dlua，生成```dlua```与```dluaagent.so```，```dlua```是控制台，```dluaagent.so```是调试插件
-```
-# ./build.sh
-```
-* 下载编译[hookso](https://github.com/esrrhs/hookso)，生成```hookso```，```hookso```是注入工具
-* 最后将```dlua```、```dluaagent.so```、```hookso```放在同级目录即可使用
+---
 
-# 使用
-* 找到目标进程pid，也可以使用项目中的示例代码。假设pid=1234
-```
-# lua test.lua
-```
+## Features
 
-* 运行dlua，附加到1234进程，出现如下提示，说明连接正常，可以开始调试
-```
-# ./dlua 1234
-attack to 1234 ok, use ctrl+c to input command, eg: h
-```
+- **Linux Platform Support**: Designed for Linux environments.
+- **C++ Implementation**: High performance with minimal overhead.
+- **Non-intrusive Dynamic Attach**: Attaches directly to already running Lua processes without code modification.
+- **GDB-Style Debugging Interface**:
+  - Breakpoints: Line breakpoints, function breakpoints, and conditional breakpoints. Flexible syntax supporting spaces (e.g., `b file.lua:10`, `b file.lua 10`, `b file.lua : 10`).
+  - Execution Control: Next line (`n`), step into (`s`), finish function (`fin`), continue (`c`).
+  - Inspection & Evaluation: Stack backtrace (`bt`), view/switch stack frames (`f`), inspect expressions (`p`), print tables, list source code (`l`).
+  - Runtime Modification: Set local/upvalue/global variables (`set`), execute arbitrary Lua snippets (`r`).
+  - Breakpoint Management: Enable (`en`), disable (`dis`), delete (`d`), inspect breakpoints (`i b`).
 
-* 输入ctrl+c，输入h回车查看帮助
-```
-(dlua) h
-h       help commands
-q       quit
-bt      show cur call stack
-b       add breakpoint, eg: b test.lua:123
-i       show info, eg: i b
-n       step next line
-s       step into next line
-c       continue run
-dis     disable breakpoint, eg: dis 1
-en      enable breakpoint, eg: en 1
-d       delete breakpoint, eg: d 1
-p       print exp value, eg: p _G.xxx
-l       list code
-f       select stack frame
-fin     finish current call
-set     set value, eg: set aa=1
-r       run code, eg: r print("test")
-```
+---
 
-* 其他命令同理，输入ctrl+c，输入命令即可
-```
-(dlua) bt
-0 in string_time_to_unix_time at test.lua:23
-1 in ? at test.lua:50
-2 in ? at [C]:-1
-```
+## Build & Installation
 
-* 退出，则输入q
-```
-(dlua) q
-#
-```
+### Prerequisites
+- Linux OS (e.g., Ubuntu / Debian / CentOS)
+- GCC / G++ supporting C++11 or higher
+- GNU Readline development library (`libreadline-dev`)
+- [Lua 5.3+](https://www.lua.org/download.html) headers and library
 
-# 命令
-### h
-帮助
-### q
-退出
-### bt
-查看调用堆栈
-### b
-打断点，打在某个文件某一行
-```
-b test.lua:34
-```
-打在当前文件的某一行
-```
-b 34
-```
-打在当前正执行到的行
-```
-b 
-```
-打在某个函数的入口
-```
-b string_time_to_unix_time_with_tz
-```
-打在某个嵌套函数的入口
-```
-b _G.test.getweekstart_by_tz_test
-```
-条件断点，方括号的tz表示需要的参数，作为输入参与到后面的表达式计算
-```
-b string_time_to_unix_time_with_tz if [tz] tz==800
-```
-### i
-罗列当前的断点
-```
-i b
-``` 
-### n
-下一行，如果当前位置是函数，则跳过内部
-### s
-下一行，如果当前位置是函数，则跳进内部
-### c
-取消步进，继续执行
-### dis
-取消断点，取消某个断点
-```
-dis 1
-```
-取消所有断点
-```
-dis
-```
-### en
-生效断点，生效某个断点
-```
-en 1
-```
-生效所有断点
-```
-en
-```
-### d
-删除断点，删除某个断点
-```
-d 1
-```
-删除所有断点
-```
-d
-```
-### p
-查看当前栈的变量，如
-```
-p year
-```
-或者全局的
-```
-p _G.test
-```
-或者复杂的，查看table中的某一项，[]表示需要传入的变量，作为输入参与到后面的表达式计算
-```
-p [tmp] tmp.abc
-```
-### l
-查看当前栈的附近代码，如
-```
-l
-```
-查看附近20行的代码
-```
-l 20
-```
-### f
-设置当前栈帧，具体编号从bt查看，如
-```
+### Build Steps
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/esrrhs/dLua.git
+   cd dLua
+   ```
+2. Run `build.sh` to compile `dlua` (frontend CLI), `dluaagent.so` (debugger agent), and `test_unit`:
+   ```bash
+   ./build.sh
+   ```
+3. Run unit tests to verify:
+   ```bash
+   ./test_unit
+   ```
+4. Download or compile [hookso](https://github.com/esrrhs/hookso) (shared library injection utility), and place the `hookso` binary in the same directory as `dlua` and `dluaagent.so`.
+
+---
+
+## Quick Start
+
+1. Start your target Lua process or use the sample script:
+   ```bash
+   lua test.lua
+   ```
+   Note the process PID (assume PID is `1234`).
+
+2. Launch `dlua` and attach to the target PID:
+   ```bash
+   ./dlua 1234
+   ```
+   When the connection is established, you will see:
+   ```text
+   attach to 1234 ok, use ctrl+c to input command, eg: h
+   ```
+
+3. Press `Ctrl+C` to enter the prompt, then type `h` and press Enter to view help:
+   ```text
+   (dlua) h
+   h       help commands
+   q       quit
+   bt      show cur call stack
+   b       add breakpoint, eg: b test.lua:123
+   i       show info, eg: i b
+   n       step next line
+   s       step into next line
+   c       continue run
+   dis     disable breakpoint, eg: dis 1
+   en      enable breakpoint, eg: en 1
+   d       delete breakpoint, eg: d 1
+   p       print exp value, eg: p _G.xxx
+   l       list code
+   f       select stack frame
+   fin     finish current call
+   set     set value, eg: set aa=1
+   r       run code, eg: r print("test")
+   ```
+
+4. Press `Ctrl+C` anytime to interrupt execution and input commands:
+   ```text
+   (dlua) bt
+   0 in string_time_to_unix_time at test.lua:23
+   1 in ? at test.lua:50
+   2 in ? at [C]:-1
+   ```
+
+5. Type `q` to detach and quit:
+   ```text
+   (dlua) q
+   ```
+
+---
+
+## Command Reference
+
+### `h`
+Display help information.
+
+### `q`
+Detach from process and exit debugger.
+
+### `bt`
+Print current call stack backtrace.
+
+### `b`
+Set a breakpoint. Flexible syntax supports spaces:
+- Break at file and line:
+  ```text
+  b test.lua:34
+  b test.lua 34
+  b test.lua : 34
+  ```
+- Break at line in current file:
+  ```text
+  b 34
+  ```
+- Break at current execution line:
+  ```text
+  b
+  ```
+- Break at function entry:
+  ```text
+  b string_time_to_unix_time_with_tz
+  ```
+- Break at nested table function entry:
+  ```text
+  b _G.test.getweekstart_by_tz_test
+  ```
+- Conditional breakpoint (variables inside `[...]` are extracted from the scope and passed into expression evaluation):
+  ```text
+  b string_time_to_unix_time_with_tz if [tz] tz==800
+  b test.lua 34 if [a,b] a + b == 10
+  ```
+
+### `i`
+Show debug information:
+- List breakpoints:
+  ```text
+  i b
+  ```
+
+### `n`
+Step over to next line.
+
+### `s`
+Step into function.
+
+### `c`
+Continue program execution.
+
+### `dis`
+Disable breakpoint:
+- Disable specific breakpoint:
+  ```text
+  dis 1
+  ```
+- Disable all breakpoints:
+  ```text
+  dis
+  ```
+
+### `en`
+Enable breakpoint:
+- Enable specific breakpoint:
+  ```text
+  en 1
+  ```
+- Enable all breakpoints:
+  ```text
+  en
+  ```
+
+### `d`
+Delete breakpoint:
+- Delete specific breakpoint:
+  ```text
+  d 1
+  ```
+- Delete all breakpoints:
+  ```text
+  d
+  ```
+
+### `p`
+Evaluate and print variable/expression:
+- Print local/upvalue/global variable:
+  ```text
+  p year
+  ```
+- Print global table:
+  ```text
+  p _G.test
+  ```
+- Print expression using variables:
+  ```text
+  p [tmp] tmp.abc
+  ```
+
+### `l`
+List source code around current line:
+- Default view:
+  ```text
+  l
+  ```
+- View around line with radius:
+  ```text
+  l 20
+  ```
+
+### `f`
+Select stack frame by index (from `bt` output):
+```text
 f 0
 ```
-### fin
-跳过执行当前函数
-### set
-设置当前栈的变量，如
-```
-set year=1234
-```
-或者全局的
-```
-set _G.test = 123
-```
-或者复杂的，设置table中的某一项，[]表示需要传入的变量，作为输入参与到后面的表达式计算
-```
-set [tmp] tmp.abc = 1
-```
-### r
-运行特定代码
-```
-r print(123)
-```
-运行复杂代码，加上变量，[]表示需要传入的变量，作为输入参与到后面的表达式计算
-```
-r [tmp] tmp[1]=2
-```
 
-## 其他
-[lua全家桶](https://github.com/esrrhs/lua-family-bucket)
+### `fin`
+Finish execution of the current function call.
+
+### `set`
+Modify variable value:
+- Set simple variable:
+  ```text
+  set year=1234
+  ```
+- Set global variable:
+  ```text
+  set _G.test = 123
+  ```
+- Set table property:
+  ```text
+  set [tmp] tmp.abc = 1
+  ```
+
+### `r`
+Execute arbitrary Lua code:
+- Execute statement:
+  ```text
+  r print(123)
+  ```
+- Execute with scoped variables:
+  ```text
+  r [tmp] tmp[1]=2
+  ```
+
+---
+
+## Related Projects
+- [lua-family-bucket](https://github.com/esrrhs/lua-family-bucket)
+- [hookso](https://github.com/esrrhs/hookso)

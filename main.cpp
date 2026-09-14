@@ -314,7 +314,7 @@ int process() {
     }
 
     DLOG("connect ok %d", g_pid);
-    printf("attack to %d ok, use ctrl+c to input command, eg: h\n", g_pid);
+    printf("attach to %d ok, use ctrl+c to input command, eg: h\n", g_pid);
 
     while (g_quit != 1) {
         if (g_int != 0) {

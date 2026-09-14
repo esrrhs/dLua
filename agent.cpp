@@ -333,21 +333,71 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
             return 0;
         }
     } else {
-        std::string bpos = result[1];
-        DLOG("process_b_command start %s", bpos.c_str());
+        std::string input = data;
+        input.erase(0, input.find_first_not_of(" "));
+        input.erase(0, input.find_first_not_of("b"));
+        input.erase(0, input.find_first_not_of(" "));
 
-        std::string delimiter = ":";
-        size_t pos = 0;
-        std::vector <std::string> tokens;
-        while ((pos = bpos.find(delimiter)) != std::string::npos) {
-            std::string token = bpos.substr(0, pos);
-            tokens.push_back(token);
-            bpos.erase(0, pos + delimiter.length());
+        // Check if there is an 'if' condition
+        // e.g.: b test.lua:33 if [a,b] a + b == 10
+        // e.g.: b test.lua 33 if [a,b] a + b == 10
+        size_t ifpos = std::string::npos;
+        {
+            // find word "if" with spaces around or preceded by space
+            std::istringstream checkiss(input);
+            std::string word;
+            size_t curr = 0;
+            while (checkiss >> word) {
+                if (word == "if") {
+                    ifpos = input.find("if", curr);
+                    break;
+                }
+                curr = input.find(word, curr) + word.length();
+            }
         }
-        tokens.push_back(bpos);
-        if (tokens.size() < 2) {
-            std::string bpoint = tokens[0];
-            if (std::all_of(bpoint.begin(), bpoint.end(), ::isdigit)) {
+
+        std::string bpos = "";
+        if (ifpos != std::string::npos) {
+            bpos = input.substr(0, ifpos);
+            std::string rem = input.substr(ifpos);
+            rem.erase(0, rem.find_first_not_of(" "));
+            rem.erase(0, rem.find_first_not_of("if"));
+            rem.erase(0, rem.find_first_not_of(" "));
+            ifparam = rem;
+        } else {
+            bpos = input;
+        }
+
+        // Trim bpos
+        bpos.erase(0, bpos.find_first_not_of(" "));
+        bpos.erase(bpos.find_last_not_of(" ") + 1);
+
+        DLOG("process_b_command start bpos %s ifparam %s", bpos.c_str(), ifparam.c_str());
+
+        // Support formats:
+        // 1) file:line (e.g., test.lua:34 or test.lua : 34)
+        // 2) file line (e.g., test.lua 34)
+        // 3) line (e.g., 34)
+        // 4) func (e.g., funcname or table.funcname)
+        if (bpos.find(":") != std::string::npos) {
+            size_t cpos = bpos.find(":");
+            file = bpos.substr(0, cpos);
+            linestr = bpos.substr(cpos + 1);
+            file.erase(0, file.find_first_not_of(" "));
+            file.erase(file.find_last_not_of(" ") + 1);
+            linestr.erase(0, linestr.find_first_not_of(" "));
+            linestr.erase(linestr.find_last_not_of(" ") + 1);
+        } else {
+            std::vector<std::string> btokens;
+            std::istringstream biss(bpos);
+            for (std::string s; biss >> s;) {
+                btokens.push_back(s);
+            }
+            if (btokens.size() == 2 && std::all_of(btokens[1].begin(), btokens[1].end(), ::isdigit)) {
+                // e.g. b test.lua 123
+                file = btokens[0];
+                linestr = btokens[1];
+            } else if (btokens.size() == 1 && std::all_of(btokens[0].begin(), btokens[0].end(), ::isdigit)) {
                 // b 123
                 lua_Debug entry;
                 memset(&entry, 0, sizeof(entry));
@@ -359,9 +409,10 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
                     return 0;
                 }
                 file = entry.short_src;
-                linestr = tokens[0];
-            } else {
-                // b xxx.xxx.xxx
+                linestr = btokens[0];
+            } else if (btokens.size() == 1) {
+                // b xxx.xxx.xxx or b func
+                std::string bpoint = btokens[0];
                 std::string delimiter = ".";
                 size_t pos = 0;
                 std::vector <std::string> tokens;
@@ -375,7 +426,7 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
                 int oldn = lua_gettop(L);
 
                 lua_getglobal(L, tokens[0].c_str());
-                for (int i = 0; i < tokens.size() - 1; ++i) {
+                for (int i = 0; i < (int)tokens.size() - 1; ++i) {
                     if (!lua_istable(L, -1)) {
                         lua_settop(L, oldn);
                         send_msg(g_qid_send, SHOW_MSG, (std::string("can not find table ") + tokens[i]).c_str());
@@ -403,31 +454,10 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
 
                 file = entry.short_src;
                 linestr = std::to_string(entry.linedefined + 1);
-            }
-        } else {
-            // b test.lua:123
-            file = tokens[0];
-            linestr = tokens[1];
-        }
-
-        // b xxx if a==x
-        if (result.size() >= 4) {
-            std::string iftr = result[2];
-            if (iftr != "if") {
-                send_msg(g_qid_send, SHOW_MSG, "eg: b test.lua:33 if [a,b] a + b == 10 ");
+            } else {
+                send_msg(g_qid_send, SHOW_MSG, "invalid breakpoint format, eg: b test.lua:123 or b test.lua 123\n");
                 return 0;
             }
-
-            std::string input = data;
-            input.erase(0, input.find_first_not_of(" "));
-            input.erase(0, input.find_first_not_of("b"));
-            input.erase(0, input.find_first_not_of(" "));
-            input.erase(0, input.find_first_not_of(result[1]));
-            input.erase(0, input.find_first_not_of(" "));
-            input.erase(0, input.find_first_not_of("if"));
-            input.erase(0, input.find_first_not_of(" "));
-
-            ifparam = input;
         }
     }
 
@@ -641,9 +671,10 @@ int process_d_command(lua_State *L, const std::vector <std::string> &result) {
     if (bid == -1) {
         g_blist.clear();
     } else {
-        for (int i = 0; i < g_blist.size(); ++i) {
-            if (g_blist[i].no == bid) {
-                g_blist.erase(g_blist.begin() + i);
+        for (auto it = g_blist.begin(); it != g_blist.end(); ++it) {
+            if (it->no == bid) {
+                g_blist.erase(it);
+                break;
             }
         }
     }

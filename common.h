@@ -34,13 +34,14 @@
 #include <sys/wait.h>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <array>
 
 const int open_debug = 0;
 
 #define DLOG(...) if (open_debug) {dlog(stdout, "[DEBUG] ", __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__);}
 #define DERR(...)  {dlog(stderr, "[ERROR] ", __FILE__, __FUNCTION__, __LINE__, __VA_ARGS__);}
 
-void dlog(FILE *fd, const char *header, const char *file, const char *func, int pos, const char *fmt, ...) {
+inline void dlog(FILE *fd, const char *header, const char *file, const char *func, int pos, const char *fmt, ...) {
     time_t clock1;
     struct tm *tptr;
     va_list ap;
@@ -132,7 +133,7 @@ static int open_msg_queue(const char *tmpfilename, int pid) {
     return qid;
 }
 
-std::string exec_command(const char *cmd, int &out) {
+inline std::string exec_command(const char *cmd, int &out) {
     out = 0;
     auto pPipe = ::popen(cmd, "r");
     if (pPipe == nullptr) {
