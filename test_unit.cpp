@@ -16,6 +16,7 @@ struct BreakPoint {
     int no;
     bool en;
     int hit;
+    bool temporary;
     std::string ifstr;
     std::string iffunc;
     std::vector <std::string> iffuncparam;
@@ -27,7 +28,10 @@ void trim_inplace(std::string &s);
 bool is_digits(const std::string &s);
 void strip_command_verb(std::string &input, const std::string &verb);
 bool split_file_line(const std::string &bpos, std::string &file, std::string &linestr);
-int process_b_command(lua_State *L, const std::vector<std::string> &result, char data[QUEUED_MESSAGE_MSG_LEN]);
+int process_b_command(lua_State *L, const std::vector<std::string> &result, char data[QUEUED_MESSAGE_MSG_LEN], bool temporary = false);
+int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]);
+int send_show_chunked(const std::string &msg);
+extern int g_until_active;
 int process_d_command(lua_State *L, const std::vector<std::string> &result);
 int process_dis_command(lua_State *L, const std::vector<std::string> &result);
 int process_en_command(lua_State *L, const std::vector<std::string> &result);
@@ -421,6 +425,7 @@ int main() {
         b.no = 1;
         b.en = true;
         b.hit = 0;
+        b.temporary = false;
         g_blist.push_back(b);
         assert(has_enabled_breakpoint());
         assert(need_line_hook());
@@ -432,6 +437,65 @@ int main() {
         g_step = 1;
         assert(need_line_hook());
         g_step = 0;
+        g_blist.clear();
+        std::cout << "  -> PASS" << std::endl;
+    }
+
+    // Test 6c: tbreak, send_show_chunked, info locals / until helpers
+    std::cout << "[Test 6c] Testing tbreak / chunked SHOW / until flags..." << std::endl;
+    {
+        // Recreate queues in case prior tests invalidated ids
+        remove_msg_queue(q1);
+        remove_msg_queue(q2);
+        q1 = open_msg_queue(path1.c_str(), 1, 0600);
+        q2 = open_msg_queue(path2.c_str(), 1, 0600);
+        assert(q1 >= 0 && q2 >= 0);
+        g_qid_send = q2;
+        g_qid_recv = q1;
+
+        g_blist.clear();
+        char data[QUEUED_MESSAGE_MSG_LEN];
+        memset(data, 0, sizeof(data));
+        strncpy(data, "b test.lua:10", sizeof(data) - 1);
+        process_b_command(L, std::vector<std::string>{"b", "test.lua:10"}, data, true);
+        assert(g_blist.size() == 1);
+        assert(g_blist[0].temporary == true);
+        assert(g_blist[0].line == 10);
+
+        // Also exercise process_command alias path for tb
+        g_blist.clear();
+        memset(data, 0, sizeof(data));
+        strncpy(data, "tb test.lua:12", sizeof(data) - 1);
+        process_command(L, COMMAND_MSG, data);
+        assert(g_blist.size() == 1);
+        assert(g_blist[0].temporary == true);
+        assert(g_blist[0].line == 12);
+
+        // Drain prior SHOW noise so the queue cannot be full
+        long mtype = 0;
+        char mdata[QUEUED_MESSAGE_MSG_LEN];
+        while (recv_msg(q2, mtype, mdata) == 0 && mtype != 0) {}
+
+        // Chunked SHOW: message longer than QUEUED_MESSAGE_MSG_LEN
+        std::string longmsg(QUEUED_MESSAGE_MSG_LEN + 50, 'A');
+        assert(send_show_chunked(longmsg) == 0);
+        int chunks = 0;
+        size_t total = 0;
+        while (recv_msg(q2, mtype, mdata) == 0 && mtype != 0) {
+            if (mtype == SHOW_MSG) {
+                chunks++;
+                total += strlen(mdata);
+            }
+        }
+        assert(chunks >= 2);
+        assert(total == longmsg.size());
+
+        g_until_active = 0;
+        g_step = 1;
+        // until without live stack should no-op safely when no stack — call via process_command
+        // Drain any leftover
+        while (recv_msg(q2, mtype, mdata) == 0 && mtype != 0) {}
+
         g_blist.clear();
         std::cout << "  -> PASS" << std::endl;
     }

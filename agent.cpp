@@ -13,6 +13,7 @@ struct BreakPoint {
     int no;
     bool en;
     int hit;
+    bool temporary;         // tbreak: removed on hit
     std::string ifstr;
     std::string iffunc;
     std::vector <std::string> iffuncparam;
@@ -44,6 +45,10 @@ int g_step_debug_level;
 int g_load_pprint_string;
 int g_load_getvar_string;
 int g_load_setvar_string;
+int g_until_active;
+int g_until_line;
+int g_until_level;
+std::string g_until_file;
 
 void hook_handler(lua_State *L, lua_Debug *par);
 
@@ -232,6 +237,10 @@ int ini_agent() {
     g_load_pprint_string = 0;
     g_load_getvar_string = 0;
     g_load_setvar_string = 0;
+    g_until_active = 0;
+    g_until_line = 0;
+    g_until_level = 0;
+    g_until_file = "";
 
     DLOG("ini_agent ok %d", g_pid);
 
@@ -258,7 +267,7 @@ bool has_enabled_breakpoint() {
 }
 
 bool need_line_hook() {
-    return g_step != 0 || has_enabled_breakpoint();
+    return g_step != 0 || g_until_active != 0 || has_enabled_breakpoint();
 }
 
 // Enable LUA_MASKLINE only while stepping or any BP is enabled; otherwise use a
@@ -281,25 +290,43 @@ void update_hook_mask(lua_State *L) {
     }
 }
 
+int send_show_chunked(const std::string &msg) {
+    // SysV payload capped at QUEUED_MESSAGE_MSG_LEN (1023) usable bytes.
+    const size_t maxlen = (size_t) QUEUED_MESSAGE_MSG_LEN;
+    if (msg.size() <= maxlen) {
+        return send_msg(g_qid_send, SHOW_MSG, msg.c_str());
+    }
+    for (size_t off = 0; off < msg.size(); off += maxlen) {
+        std::string piece = msg.substr(off, maxlen);
+        if (send_msg(g_qid_send, SHOW_MSG, piece.c_str()) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 int process_help_command() {
-    std::string ret = "h\thelp commands\n"
-                      "q\tquit\n"
-                      "bt\tshow cur call stack\n"
-                      "b\tadd breakpoint, eg: b test.lua:123 or b test.lua : 123\n"
-                      "i\tshow info, eg: i b\n"
-                      "n\tstep next line\n"
-                      "s\tstep into next line\n"
-                      "c\tcontinue run\n"
-                      "dis\tdisable breakpoint, eg: dis 1\n"
-                      "en\tenable breakpoint, eg: en 1\n"
-                      "d\tdelete breakpoint, eg: d 1\n"
-                      "p\tprint exp value, eg: p _G.xxx\n"
-                      "l\tlist code\n"
-                      "f\tselect stack frame\n"
-                      "fin\tfinish current call\n"
-                      "set\tset value, eg: set aa=1\n"
-                      "r\trun code, eg: r print(\"test\")\n";
-    send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    std::string ret =
+        "h\thelp commands\n"
+        "q\tquit\n"
+        "bt\tshow cur call stack\n"
+        "b\tadd breakpoint, eg: b test.lua:123 or b test.lua : 123\n"
+        "tbreak/tb\ttemporary breakpoint (cleared on hit)\n"
+        "i\tshow info, eg: i b / i locals (i l)\n"
+        "n\tstep next line\n"
+        "s\tstep into next line\n"
+        "c\tcontinue run\n"
+        "until/u\trun until line (or next line / leave frame)\n"
+        "dis\tdisable breakpoint, eg: dis 1\n"
+        "en\tenable breakpoint, eg: en 1\n"
+        "d\tdelete breakpoint, eg: d 1\n"
+        "p\tprint exp value, eg: p _G.xxx\n"
+        "l\tlist code\n"
+        "f\tselect stack frame\n"
+        "fin\tfinish current call\n"
+        "set\tset value, eg: set aa=1\n"
+        "r\trun code, eg: r print(\"test\")\n";
+    send_show_chunked(ret);
     return 0;
 }
 
@@ -323,7 +350,7 @@ int process_bt_command(lua_State *L) {
         depth++;
     }
     DLOG("process_bt_command %s", ret.c_str());
-    send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    send_show_chunked(ret);
     return 0;
 }
 
@@ -487,7 +514,7 @@ bool split_file_line(const std::string &bpos, std::string &file, std::string &li
     return true;
 }
 
-int process_b_command(lua_State *L, const std::vector <std::string> &result, char data[QUEUED_MESSAGE_MSG_LEN]) {
+int process_b_command(lua_State *L, const std::vector <std::string> &result, char data[QUEUED_MESSAGE_MSG_LEN], bool temporary = false) {
     std::string file;
     std::string linestr;
     std::string ifparam = "";
@@ -709,11 +736,13 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
         b.line = line;
         b.no = maxno + 1;
         b.hit = 0;
+        b.temporary = temporary;
         g_blist.push_back(b);
         bindex = g_blist.size() - 1;
     } else {
         g_blist[bindex].file = file;
         g_blist[bindex].norm_file = normalize_src_path(file);
+        g_blist[bindex].temporary = temporary;
     }
     g_blist[bindex].en = true;
     g_blist[bindex].ifstr = ifparam;
@@ -723,7 +752,8 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
     std::string ret;
     char buff[128] = {0};
     // Breakpoint 2 at 0x41458c: file lapi.c, line 968.
-    snprintf(buff, sizeof(buff) - 1, "Breakpoint %d at file %s, line %d, if %s\n", g_blist[bindex].no,
+    snprintf(buff, sizeof(buff) - 1, "%s %d at file %s, line %d, if %s\n",
+             temporary ? "Temporary breakpoint" : "Breakpoint", g_blist[bindex].no,
              g_blist[bindex].file.c_str(), g_blist[bindex].line, g_blist[bindex].ifstr.c_str());
     DLOG("process_b_command %d %s %d", g_blist[bindex].no, g_blist[bindex].file.c_str(), g_blist[bindex].line);
     ret = buff;
@@ -742,20 +772,69 @@ int process_i_command(lua_State *L, const std::vector <std::string> &result) {
 
     std::string param = result[1];
     if (param == "b") {
-        // Num     Type           Disp Enb Address            What
-        //1       breakpoint     keep y   0x000000000041458c in lua_pcallk at lapi.c:968
-        std::string ret = "Num\tEnb\tWhat\tHit\tIf\n";
+        std::string ret = "Num\tEnb\tDisp\tWhat\tHit\tIf\n";
         char buff[128] = {0};
-        for (int i = 0; i < g_blist.size(); ++i) {
+        for (int i = 0; i < (int) g_blist.size(); ++i) {
             memset(buff, 0, sizeof(buff));
-            snprintf(buff, sizeof(buff) - 1, "%d\t%s\t%s:%d\t%d\t%s\n", g_blist[i].no, g_blist[i].en ? "y" : "n",
+            snprintf(buff, sizeof(buff) - 1, "%d\t%s\t%s\t%s:%d\t%d\t%s\n", g_blist[i].no,
+                     g_blist[i].en ? "y" : "n", g_blist[i].temporary ? "del" : "keep",
                      g_blist[i].file.c_str(), g_blist[i].line, g_blist[i].hit, g_blist[i].ifstr.c_str());
             ret = ret + buff;
         }
         DLOG("process_i_command b %s", ret.c_str());
-        send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+        send_show_chunked(ret);
+    } else if (param == "locals" || param == "l") {
+        if (g_step == 0) {
+            send_msg(g_qid_send, SHOW_MSG, "need in step mode\n");
+            return 0;
+        }
+        lua_Debug entry;
+        memset(&entry, 0, sizeof(entry));
+        if (lua_getstack(L, g_step_debug_level, &entry) <= 0) {
+            send_msg(g_qid_send, SHOW_MSG, "no stack frame\n");
+            return 0;
+        }
+        std::string ret = "Locals:\n";
+        char buff[256] = {0};
+        int i = 1;
+        int shown = 0;
+        while (1) {
+            const char *name = lua_getlocal(L, &entry, i);
+            if (name == NULL) {
+                break;
+            }
+            if (name[0] != '(') {
+                std::string val;
+                int tp = lua_type(L, -1);
+                if (tp == LUA_TNUMBER) {
+                    if (lua_isinteger(L, -1)) {
+                        val = std::to_string((long long) lua_tointeger(L, -1));
+                    } else {
+                        val = std::to_string(lua_tonumber(L, -1));
+                    }
+                } else if (tp == LUA_TSTRING) {
+                    val = std::string("\"") + lua_tostring(L, -1) + "\"";
+                } else if (tp == LUA_TBOOLEAN) {
+                    val = lua_toboolean(L, -1) ? "true" : "false";
+                } else if (tp == LUA_TNIL) {
+                    val = "nil";
+                } else {
+                    val = lua_typename(L, tp);
+                }
+                memset(buff, 0, sizeof(buff));
+                snprintf(buff, sizeof(buff) - 1, "  %s = %s\n", name, val.c_str());
+                ret += buff;
+                shown++;
+            }
+            lua_pop(L, 1);
+            i++;
+        }
+        if (shown == 0) {
+            ret += "  (none)\n";
+        }
+        send_show_chunked(ret);
     } else {
-        send_msg(g_qid_send, SHOW_MSG, "param not support\n");
+        send_msg(g_qid_send, SHOW_MSG, "param not support, try: i b / i locals\n");
         return 0;
     }
 
@@ -796,6 +875,7 @@ int process_c_command(lua_State *L) {
     g_step_last_line = 0;
     g_step_last_level = 0;
     g_step_debug_level = 0;
+    g_until_active = 0;
     update_hook_mask(L);
     return 0;
 }
@@ -1483,6 +1563,48 @@ int process_r_command(lua_State *L, const std::vector <std::string> &result, cha
     return 0;
 }
 
+int process_until_command(lua_State *L, const std::vector <std::string> &result) {
+    if (g_step == 0) {
+        send_msg(g_qid_send, SHOW_MSG, "need in step mode\n");
+        return 0;
+    }
+
+    lua_Debug entry;
+    memset(&entry, 0, sizeof(entry));
+    if (lua_getstack(L, g_step_debug_level, &entry) <= 0) {
+        return 0;
+    }
+    int status = lua_getinfo(L, "Sln", &entry);
+    if (status <= 0) {
+        return 0;
+    }
+
+    int target_line = entry.currentline + 1;
+    if (result.size() >= 2) {
+        if (!is_digits(result[1])) {
+            send_msg(g_qid_send, SHOW_MSG, "until need line number, eg: until 40\n");
+            return 0;
+        }
+        target_line = atoi(result[1].c_str());
+    }
+
+    g_until_file = entry.short_src ? entry.short_src : "";
+    g_until_line = target_line;
+    g_until_level = lastlevel(L);
+    g_until_active = 1;
+
+    g_step = 0;
+    g_step_next = 0;
+    g_step_next_in = 0;
+    g_step_next_out = 0;
+
+    char buff[128] = {0};
+    snprintf(buff, sizeof(buff) - 1, "until %s:%d\n", g_until_file.c_str(), g_until_line);
+    send_msg(g_qid_send, SHOW_MSG, buff);
+    update_hook_mask(L);
+    return 0;
+}
+
 int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) {
     std::string command = data;
     if (command == "") {
@@ -1504,7 +1626,17 @@ int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) 
     } else if (token == "bt") {
         ret = process_bt_command(L);
     } else if (token == "b") {
-        ret = process_b_command(L, result, data);
+        ret = process_b_command(L, result, data, false);
+    } else if (token == "tbreak" || token == "tb") {
+        std::string rest = data;
+        strip_command_verb(rest, token);
+        std::string fake = std::string("b ") + rest;
+        char databuf[QUEUED_MESSAGE_MSG_LEN];
+        memset(databuf, 0, sizeof(databuf));
+        strncpy(databuf, fake.c_str(), QUEUED_MESSAGE_MSG_LEN - 1);
+        std::vector <std::string> res2 = result;
+        res2[0] = "b";
+        ret = process_b_command(L, res2, databuf, true);
     } else if (token == "i") {
         ret = process_i_command(L, result);
     } else if (token == "n") {
@@ -1513,6 +1645,8 @@ int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) 
         ret = process_s_command(L);
     } else if (token == "c") {
         ret = process_c_command(L);
+    } else if (token == "until" || token == "u") {
+        ret = process_until_command(L, result);
     } else if (token == "dis") {
         ret = process_dis_command(L, result);
     } else if (token == "en") {
@@ -1535,7 +1669,7 @@ int process_command(lua_State *L, long type, char data[QUEUED_MESSAGE_MSG_LEN]) 
         send_msg(g_qid_send, SHOW_MSG, "use h for help\n");
     }
 
-    if (g_step != 0 && g_step_next_in == 0 && g_step_next == 0 && g_step_next_out == 0) {
+    if (g_step != 0 && g_step_next_in == 0 && g_step_next == 0 && g_step_next_out == 0 && g_until_active == 0) {
         send_msg(g_qid_send, INPUT_MSG, "");
     }
 
@@ -1643,6 +1777,7 @@ int check_bp(lua_State *L) {
                 g_step_next = 0;
                 g_step_next_in = 0;
                 g_step_next_out = 0;
+                g_until_active = 0;
             }
             break;
         }
@@ -1656,14 +1791,45 @@ int check_bp(lua_State *L) {
         return 0;
     }
 
+    // until: stop at/after target line in file, or when leaving the frame.
+    if (g_until_active && g_step == 0) {
+        bool until_hit = false;
+        if (curlevel < g_until_level) {
+            until_hit = true;
+        } else if (match_src(g_until_file, curfile) && curline >= g_until_line) {
+            until_hit = true;
+        }
+        if (until_hit) {
+            g_until_active = 0;
+            g_step = 1;
+            g_step_next = 0;
+            g_step_next_in = 0;
+            g_step_next_out = 0;
+            char ubuf[128] = {0};
+            snprintf(ubuf, sizeof(ubuf) - 1, "until hit at %s:%d\n", curfile.c_str(), curline);
+            send_msg(g_qid_send, SHOW_MSG, ubuf);
+            update_hook_mask(L);
+        }
+    }
+
     if (bindex != -1) {
-        // Breakpoint 1, lua_pcallk (L=0x7f772b029008, nargs=2, nresults=1, errfunc=<optimized out>, ctx=0, k=0x0) at lapi.c:968
         std::string ret;
         char buff[128] = {0};
         snprintf(buff, sizeof(buff) - 1, "Breakpoint %d, %s at %s:%d\n", g_blist[bindex].no, curfunc.c_str(),
                  g_blist[bindex].file.c_str(), g_blist[bindex].line);
         ret = buff;
         send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+
+        if (g_blist[bindex].temporary) {
+            int delno = g_blist[bindex].no;
+            for (auto it = g_blist.begin(); it != g_blist.end(); ++it) {
+                if (it->no == delno) {
+                    g_blist.erase(it);
+                    break;
+                }
+            }
+            update_hook_mask(L);
+        }
     }
 
     if (g_step == 1) {
@@ -1766,8 +1932,8 @@ void hook_handler(lua_State *L, lua_Debug *par) {
         return;
     }
 
-    // Fast path: free-running with no step and no enabled breakpoints.
-    if (g_step == 0 && !has_enabled_breakpoint()) {
+    // Fast path: free-running with no step/until and no enabled breakpoints.
+    if (g_step == 0 && g_until_active == 0 && !has_enabled_breakpoint()) {
         return;
     }
 

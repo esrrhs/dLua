@@ -57,10 +57,13 @@ dLua attaches to an already running Lua process using dynamic library injection 
 | `q` | None | Detach from target process and exit | `q` |
 | `bt` | None | Show current call stack backtrace | `bt` |
 | `b` | `<file:line>` / `<file line>` / `<line>` / `<func>` `[if ...]` | Add a line, function, or conditional breakpoint | `b test.lua:34`<br>`b test.lua 34`<br>`b 34`<br>`b my_func`<br>`b test.lua:34 if [a,b] a+b==10` |
+| `tbreak` / `tb` | same as `b` | Temporary breakpoint; deleted automatically when hit | `tb test.lua:40` |
 | `i b` | None | List current breakpoints and hit counts | `i b` |
+| `i locals` / `i l` | None | Show local variables in the selected frame (step mode) | `i locals` |
 | `n` | None | Step over to next line | `n` |
 | `s` | None | Step into next line / function call | `s` |
 | `c` | None | Continue program execution | `c` |
+| `until` / `u` | `[line]` | Run until line (or next line / leave frame) | `until`<br>`u 50` |
 | `fin` | None | Finish execution of current function call | `fin` |
 | `dis` | `[id]` | Disable specific breakpoint (or all if omitted) | `dis 1`<br>`dis` |
 | `en` | `[id]` | Enable specific breakpoint (or all if omitted) | `en 1`<br>`en` |
