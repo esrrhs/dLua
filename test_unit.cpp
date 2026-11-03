@@ -500,6 +500,44 @@ int main() {
         std::cout << "  -> PASS" << std::endl;
     }
 
+    // Test 6d: Extra helper coverage from earlier PRs
+    std::cout << "[Test 6d] Testing extra helpers..." << std::endl;
+    {
+        assert(normalize_src_path("") == "");
+        assert(normalize_src_path("./") == "");
+        assert(match_src("x.lua", "x.lua"));
+        assert(!match_src("", "x.lua"));
+
+        // Exact-size SHOW chunk (no split) and empty
+        remove_msg_queue(q1);
+        remove_msg_queue(q2);
+        q1 = open_msg_queue(path1.c_str(), 1, 0600);
+        q2 = open_msg_queue(path2.c_str(), 1, 0600);
+        g_qid_send = q2;
+        g_qid_recv = q1;
+        assert(send_show_chunked("") == 0);
+        assert(send_show_chunked(std::string(QUEUED_MESSAGE_MSG_LEN, 'B')) == 0);
+        long mtype = 0;
+        char mdata[QUEUED_MESSAGE_MSG_LEN];
+        int n = 0;
+        while (recv_msg(q2, mtype, mdata) == 0 && mtype != 0) {
+            n++;
+        }
+        assert(n == 2);
+
+        // help via process_command
+        char hdata[QUEUED_MESSAGE_MSG_LEN] = "h";
+        process_command(L, COMMAND_MSG, hdata);
+        bool saw_help = false;
+        while (recv_msg(q2, mtype, mdata) == 0 && mtype != 0) {
+            if (std::string(mdata).find("tbreak") != std::string::npos) {
+                saw_help = true;
+            }
+        }
+        assert(saw_help);
+        std::cout << "  -> PASS" << std::endl;
+    }
+
     // Test 7: SysV IPC path uniqueness and idempotent RMID
     std::cout << "[Test 7] Testing IPC identity helpers..." << std::endl;
     {

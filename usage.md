@@ -20,6 +20,11 @@ dLua attaches to an already running Lua process using dynamic library injection 
 
 ---
 
+
+## Limitations
+
+dLua attaches to **one** `lua_State` per session. Multi-state hosts need a separate attach targeting the desired state. Long debugger output is split across SysV messages (`QUEUED_MESSAGE_MSG_LEN` = 1023).
+
 ## 2. Getting Started
 
 1. **Launch your target Lua script**:

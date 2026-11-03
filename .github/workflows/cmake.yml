@@ -9,24 +9,33 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+    strategy:
+      fail-fast: false
+      matrix:
+        lua_version: ["5.3.6", "5.4.7"]
+
     steps:
-    - uses: actions/checkout@v3
-        
-    - name: prepare-lua
+    - uses: actions/checkout@v4
+
+    - name: prepare-deps
       run: |
         sudo apt-get update
         sudo apt-get install -y libreadline-dev wget build-essential
-        wget https://www.lua.org/ftp/lua-5.3.4.tar.gz
-        tar -xf lua-5.3.4.tar.gz
-        cd lua-5.3.4
+
+    - name: build-lua
+      run: |
+        VER=${{ matrix.lua_version }}
+        wget https://www.lua.org/ftp/lua-${VER}.tar.gz
+        tar -xf lua-${VER}.tar.gz
+        cd lua-${VER}
         make linux
         sudo make install
-        
+        lua -v
+
     - name: build
       run: |
         ./build.sh
-        
+
     - name: test
       run: |
         ./test_unit

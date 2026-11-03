@@ -83,3 +83,10 @@
 ## 相关项目
 - [lua全家桶](https://github.com/esrrhs/lua-family-bucket)
 - [hookso](https://github.com/esrrhs/hookso)
+
+## 限制
+
+- **每次附加只调试一个 Lua State**：`dlua` 会附加到目标进程中发现的一个 `lua_State*`。若进程内有多个 Lua 状态，仅能调试附加时所选中的那一个；调试其他状态需要重新附加。
+- **仅支持 Linux + hookso**：动态附加依赖 [hookso](https://github.com/esrrhs/hookso)；本仓库不打包 hookso。
+- **源路径匹配**：断点通过 basename/后缀规则匹配 Lua `short_src`；路径歧义时请优先使用 `bt` 中显示的路径。
+

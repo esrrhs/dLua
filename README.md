@@ -17,10 +17,10 @@ A GDB-like dynamic debugger for Lua programs on Linux.
 - **Non-intrusive Dynamic Attach**: Attaches directly to already running Lua processes without code modification.
 - **GDB-Style Debugging Interface**:
   - Breakpoints: Line breakpoints, function breakpoints, and conditional breakpoints. Flexible syntax supporting spaces (e.g., `b file.lua:10`, `b file.lua 10`, `b file.lua : 10`).
-  - Execution Control: Next line (`n`), step into (`s`), finish function (`fin`), continue (`c`).
-  - Inspection & Evaluation: Stack backtrace (`bt`), view/switch stack frames (`f`), inspect expressions (`p`), print tables, list source code (`l`).
+  - Execution Control: Next line (`n`), step into (`s`), finish function (`fin`), continue (`c`), until (`until`/`u`).
+  - Inspection & Evaluation: Stack backtrace (`bt`), view/switch stack frames (`f`), inspect expressions (`p`), locals (`i locals`/`i l`), list source code (`l`).
   - Runtime Modification: Set local/upvalue/global variables (`set`), execute arbitrary Lua snippets (`r`).
-  - Breakpoint Management: Enable (`en`), disable (`dis`), delete (`d`), inspect breakpoints (`i b`).
+  - Breakpoint Management: Enable (`en`), disable (`dis`), delete (`d`), temporary (`tbreak`/`tb`), inspect breakpoints (`i b`).
 
 ---
 
@@ -49,6 +49,13 @@ A GDB-like dynamic debugger for Lua programs on Linux.
 4. Download or compile [hookso](https://github.com/esrrhs/hookso) (shared library injection utility), and place the `hookso` binary in the same directory as `dlua` and `dluaagent.so`.
 
 ---
+
+
+## Limitations
+
+- **Single Lua state per attach**: `dlua` attaches to one `lua_State*` discovered from the target process. Processes that create multiple Lua states are only debugged for the state that was found at attach time; switch/reattach is required to debug another state.
+- **Linux + hookso only**: Dynamic attach relies on [hookso](https://github.com/esrrhs/hookso); packaging hookso with this repo is out of scope.
+- **Source path matching**: Breakpoints match Lua `short_src` with basename/suffix rules; prefer paths that appear in `bt` when ambiguous.
 
 ## Quick Start
 
