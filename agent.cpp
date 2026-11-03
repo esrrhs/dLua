@@ -45,6 +45,8 @@ int g_load_pprint_string;
 int g_load_getvar_string;
 int g_load_setvar_string;
 
+void hook_handler(lua_State *L, lua_Debug *par);
+
 extern "C" int is_stop_agent() {
     if (g_opening == RUNNING_STATE_STOP) {
         return 1;
@@ -244,6 +246,39 @@ int fini_agent() {
     lua_sethook(g_L, g_old_hook, g_old_hook_mask, g_old_hook_count);
     DLOG("fini_agent ok %d", g_pid);
     return 0;
+}
+
+bool has_enabled_breakpoint() {
+    for (int i = 0; i < (int) g_blist.size(); ++i) {
+        if (g_blist[i].en) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool need_line_hook() {
+    return g_step != 0 || has_enabled_breakpoint();
+}
+
+// Enable LUA_MASKLINE only while stepping or any BP is enabled; otherwise use a
+// count hook so loop_recv can still drain IPC without per-line overhead.
+void update_hook_mask(lua_State *L) {
+    if (L == NULL) {
+        L = g_L;
+    }
+    if (L == NULL) {
+        return;
+    }
+    // Skip while agent is not attached (e.g. unit tests calling process_* helpers).
+    if (g_opening != RUNNING_STATE_RUNNING && g_opening != RUNNING_STATE_BEGIN) {
+        return;
+    }
+    if (need_line_hook()) {
+        lua_sethook(L, hook_handler, LUA_MASKLINE, 0);
+    } else {
+        lua_sethook(L, hook_handler, LUA_MASKCOUNT, 1000);
+    }
 }
 
 int process_help_command() {
@@ -695,6 +730,7 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
     send_msg(g_qid_send, SHOW_MSG, (std::string("code: ") + code).c_str());
 
+    update_hook_mask(L);
     return 0;
 }
 
@@ -729,6 +765,7 @@ int process_i_command(lua_State *L, const std::vector <std::string> &result) {
 int process_n_command(lua_State *L) {
     if (g_step != 0) {
         g_step_next = 1;
+        update_hook_mask(L);
     }
     return 0;
 }
@@ -736,6 +773,7 @@ int process_n_command(lua_State *L) {
 int process_fin_command(lua_State *L) {
     if (g_step != 0) {
         g_step_next_out = 1;
+        update_hook_mask(L);
     }
     return 0;
 }
@@ -743,6 +781,7 @@ int process_fin_command(lua_State *L) {
 int process_s_command(lua_State *L) {
     if (g_step != 0) {
         g_step_next_in = 1;
+        update_hook_mask(L);
     }
     return 0;
 }
@@ -757,6 +796,7 @@ int process_c_command(lua_State *L) {
     g_step_last_line = 0;
     g_step_last_level = 0;
     g_step_debug_level = 0;
+    update_hook_mask(L);
     return 0;
 }
 
@@ -780,6 +820,7 @@ int process_dis_command(lua_State *L, const std::vector <std::string> &result) {
     }
     std::string ret = buff;
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    update_hook_mask(L);
     return 0;
 }
 
@@ -803,6 +844,7 @@ int process_en_command(lua_State *L, const std::vector <std::string> &result) {
     }
     std::string ret = buff;
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    update_hook_mask(L);
     return 0;
 }
 
@@ -831,6 +873,7 @@ int process_d_command(lua_State *L, const std::vector <std::string> &result) {
     }
     std::string ret = buff;
     send_msg(g_qid_send, SHOW_MSG, ret.c_str());
+    update_hook_mask(L);
     return 0;
 }
 
@@ -1693,7 +1736,7 @@ int check_bp(lua_State *L) {
 }
 
 void hook_handler(lua_State *L, lua_Debug *par) {
-    if (par->event != LUA_HOOKLINE) {
+    if (par->event != LUA_HOOKLINE && par->event != LUA_HOOKCOUNT) {
         DERR("diff event %d", par->event);
         return;
     }
@@ -1703,6 +1746,7 @@ void hook_handler(lua_State *L, lua_Debug *par) {
             return;
         }
         g_opening = RUNNING_STATE_RUNNING;
+        update_hook_mask(L);
         return;
     } else if (g_opening == RUNNING_STATE_END) {
         if (fini_agent() != 0) {
@@ -1715,10 +1759,21 @@ void hook_handler(lua_State *L, lua_Debug *par) {
         return;
     }
 
+    // Drain commands before BP checks so newly installed BPs cannot race past this line.
     if (loop_recv(L) != 0) {
         DERR("loop_recv fail");
         stop_agent();
         return;
+    }
+
+    // Fast path: free-running with no step and no enabled breakpoints.
+    if (g_step == 0 && !has_enabled_breakpoint()) {
+        return;
+    }
+
+    // If a command just enabled stepping/BPs during a count hook, switch to line hooks.
+    if (need_line_hook()) {
+        update_hook_mask(L);
     }
 
     if (check_bp(L) != 0) {
@@ -1742,7 +1797,9 @@ extern "C" int start_agent(lua_State *L, int pid) {
     g_old_hook_count = lua_gethookcount(L);
     g_old_hook_mask = lua_gethookmask(L);
 
-    lua_sethook(L, hook_handler, LUA_MASKLINE, 0);
+    // Start with count hook so ini_agent runs without assuming BPs; update_hook_mask
+    // refines the mask after attach / command changes.
+    lua_sethook(L, hook_handler, LUA_MASKCOUNT, 1);
 
     return 0;
 }

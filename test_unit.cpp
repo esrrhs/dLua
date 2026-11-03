@@ -37,6 +37,10 @@ std::string get_file_code(std::string filename, int lineno);
 std::string normalize_src_path(std::string path);
 std::string basename_src(const std::string &path);
 bool match_src(const std::string &lhs, const std::string &rhs);
+bool has_enabled_breakpoint();
+bool need_line_hook();
+void update_hook_mask(lua_State *L);
+extern int g_step;
 
 // Helper mock for send_msg used by agent functions during tests
 // Since agent.cpp uses static send_msg/recv_msg from common.h, we can capture or inspect queues.
@@ -401,6 +405,36 @@ int main() {
     remove_msg_queue(q2);
     unlink(path1.c_str());
     unlink(path2.c_str());
+
+    // Test 6b: Line-hook enablement helpers
+    std::cout << "[Test 6b] Testing hook mask helpers..." << std::endl;
+    {
+        g_blist.clear();
+        g_step = 0;
+        assert(!has_enabled_breakpoint());
+        assert(!need_line_hook());
+
+        BreakPoint b;
+        b.file = "test.lua";
+        b.norm_file = "test.lua";
+        b.line = 1;
+        b.no = 1;
+        b.en = true;
+        b.hit = 0;
+        g_blist.push_back(b);
+        assert(has_enabled_breakpoint());
+        assert(need_line_hook());
+
+        g_blist[0].en = false;
+        assert(!has_enabled_breakpoint());
+        assert(!need_line_hook());
+
+        g_step = 1;
+        assert(need_line_hook());
+        g_step = 0;
+        g_blist.clear();
+        std::cout << "  -> PASS" << std::endl;
+    }
 
     // Test 7: SysV IPC path uniqueness and idempotent RMID
     std::cout << "[Test 7] Testing IPC identity helpers..." << std::endl;
