@@ -98,10 +98,11 @@ long long find_luastate(std::string &validfuncaddrvalue) {
 
 int fini_env() {
     DLOG("fini_env start");
-    msgctl(g_qid_send, IPC_RMID, 0);
-    g_qid_send = 0;
-    msgctl(g_qid_recv, IPC_RMID, 0);
-    g_qid_recv = 0;
+    // CLI owns SysV queue lifetime; idempotent RMID.
+    remove_msg_queue(g_qid_send);
+    g_qid_send = -1;
+    remove_msg_queue(g_qid_recv);
+    g_qid_recv = -1;
 
     // close agent
     {
@@ -356,14 +357,15 @@ int main(int argc, char **argv) {
     DLOG("start main %d", pid);
     g_pid = pid;
 
-    const char *tmpfilename1 = "/tmp/dlua1.tmp";
-    const char *tmpfilename2 = "/tmp/dlua2.tmp";
-    int qid1 = open_msg_queue(tmpfilename1, g_pid);
+    // Per-pid paths so ftok keys cannot collide across pids (proj_id is 8-bit).
+    std::string path1 = dlua_ipc_tmp_path(g_pid, 1);
+    std::string path2 = dlua_ipc_tmp_path(g_pid, 2);
+    int qid1 = open_msg_queue(path1.c_str(), 1, 0600);
     if (qid1 < 0) {
         DERR("open_msg_queue fail");
         exit(-1);
     }
-    int qid2 = open_msg_queue(tmpfilename2, g_pid);
+    int qid2 = open_msg_queue(path2.c_str(), 1, 0600);
     if (qid2 < 0) {
         DERR("open_msg_queue fail");
         exit(-1);

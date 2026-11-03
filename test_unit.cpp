@@ -47,10 +47,10 @@ int main() {
     std::cout << "=== Running dLua Unit Tests ===" << std::endl;
 
     int test_pid = 999999;
-    const char *tmpfilename1 = "/tmp/dlua1.tmp";
-    const char *tmpfilename2 = "/tmp/dlua2.tmp";
-    int q1 = open_msg_queue(tmpfilename1, test_pid);
-    int q2 = open_msg_queue(tmpfilename2, test_pid);
+    std::string path1 = dlua_ipc_tmp_path(test_pid, 1);
+    std::string path2 = dlua_ipc_tmp_path(test_pid, 2);
+    int q1 = open_msg_queue(path1.c_str(), 1, 0600);
+    int q2 = open_msg_queue(path2.c_str(), 1, 0600);
     assert(q1 >= 0 && q2 >= 0);
 
     // Set agent queues (send to q2, recv from q1)
@@ -397,8 +397,39 @@ int main() {
     // Clean up
     unlink("btest.lua");
     lua_close(L);
-    msgctl(q1, IPC_RMID, 0);
-    msgctl(q2, IPC_RMID, 0);
+    remove_msg_queue(q1);
+    remove_msg_queue(q2);
+    unlink(path1.c_str());
+    unlink(path2.c_str());
+
+    // Test 7: SysV IPC path uniqueness and idempotent RMID
+    std::cout << "[Test 7] Testing IPC identity helpers..." << std::endl;
+    {
+        int pid_a = 1000;
+        int pid_b = 1000 + 256; // would collide under old ftok(proj=pid) scheme
+        std::string pa1 = dlua_ipc_tmp_path(pid_a, 1);
+        std::string pb1 = dlua_ipc_tmp_path(pid_b, 1);
+        assert(pa1 != pb1);
+        assert(pa1.find("1000") != std::string::npos);
+        assert(pb1.find(std::to_string(pid_b)) != std::string::npos);
+
+        int qa = open_msg_queue(pa1.c_str(), 1, 0600);
+        int qb = open_msg_queue(pb1.c_str(), 1, 0600);
+        assert(qa >= 0 && qb >= 0);
+        assert(qa != qb);
+
+        // Same path+proj reopens same queue
+        int qa2 = open_msg_queue(pa1.c_str(), 1, 0600);
+        assert(qa2 == qa);
+
+        assert(remove_msg_queue(qa) == 0);
+        assert(remove_msg_queue(qa) == 0); // idempotent
+        assert(remove_msg_queue(qb) == 0);
+        assert(remove_msg_queue(-1) == 0);
+        unlink(pa1.c_str());
+        unlink(pb1.c_str());
+        std::cout << "  -> PASS" << std::endl;
+    }
 
     std::cout << "\nALL TESTS PASSED SUCCESSFULLY!" << std::endl;
     return 0;

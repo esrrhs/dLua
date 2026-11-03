@@ -197,14 +197,16 @@ int lastlevel(lua_State *L) {
 int ini_agent() {
     DLOG("ini_agent start %d", g_pid);
 
-    const char *tmpfilename1 = "/tmp/dlua1.tmp";
-    const char *tmpfilename2 = "/tmp/dlua2.tmp";
-    int qid1 = open_msg_queue(tmpfilename1, g_pid);
+    // Attach to queues created by the CLI (main). Paths embed full pid because
+    // ftok proj_id is only 8 bits. Agent must NOT IPC_RMID — CLI owns lifecycle.
+    std::string path1 = dlua_ipc_tmp_path(g_pid, 1);
+    std::string path2 = dlua_ipc_tmp_path(g_pid, 2);
+    int qid1 = open_msg_queue(path1.c_str(), 1, 0600);
     if (qid1 < 0) {
         DERR("open_msg_queue fail");
         return -1;
     }
-    int qid2 = open_msg_queue(tmpfilename2, g_pid);
+    int qid2 = open_msg_queue(path2.c_str(), 1, 0600);
     if (qid2 < 0) {
         DERR("open_msg_queue fail");
         return -1;
@@ -236,8 +238,9 @@ int ini_agent() {
 
 int fini_agent() {
     DLOG("fini_agent start %d", g_pid);
-    msgctl(g_qid_send, IPC_RMID, 0);
-    msgctl(g_qid_recv, IPC_RMID, 0);
+    // Do not IPC_RMID here: the CLI (main) is the single owner of queue lifetime.
+    g_qid_send = -1;
+    g_qid_recv = -1;
     lua_sethook(g_L, g_old_hook, g_old_hook_mask, g_old_hook_count);
     DLOG("fini_agent ok %d", g_pid);
     return 0;

@@ -23,6 +23,7 @@
 #include <errno.h>
 #include <unordered_map>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <sstream>
 #include <algorithm>
 #include <vector>
@@ -105,24 +106,54 @@ static int recv_msg(int qid, long &type, char data[QUEUED_MESSAGE_MSG_LEN]) {
     return 0;
 }
 
-static int open_msg_queue(const char *tmpfilename, int pid) {
+// Build a per-session path. ftok() only uses the low 8 bits of proj_id, so
+// embedding the full pid in the pathname is required for uniqueness.
+inline std::string dlua_ipc_tmp_path(int pid, int side) {
+    return std::string("/tmp/dlua-") + std::to_string(pid) + "-" + std::to_string(side);
+}
 
-    int tmpfd = open(tmpfilename, O_RDWR | O_CREAT, 0777);
+// Idempotent remove of a message queue (single-owner cleanup helper).
+static int remove_msg_queue(int qid) {
+    if (qid < 0) {
+        return 0;
+    }
+    if (msgctl(qid, IPC_RMID, 0) != 0) {
+        if (errno == EINVAL || errno == EIDRM) {
+            return 0;
+        }
+        DERR("msgctl IPC_RMID fail %d %d %s", qid, errno, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+// Create or open a SysV message queue.
+// proj_id: small constant (1..255); uniqueness comes from tmpfilename (includes pid).
+// mode: typically 0600. Returns qid or -1.
+static int open_msg_queue(const char *tmpfilename, int proj_id, int mode = 0600) {
+    int tmpfd = open(tmpfilename, O_RDWR | O_CREAT, mode);
     if (tmpfd == -1) {
         DERR("open tmpfile fail %s %d %s", tmpfilename, errno, strerror(errno));
         return -1;
     }
+    // Enforce permissions even if the file already existed with a wider mode.
+    fchmod(tmpfd, mode);
     close(tmpfd);
 
-    key_t key = ftok(tmpfilename, pid);
+    // Only low 8 bits of proj_id are used by ftok; keep it a tiny constant.
+    int proj = proj_id & 0xff;
+    if (proj == 0) {
+        proj = 1;
+    }
+    key_t key = ftok(tmpfilename, proj);
     if (key == -1) {
-        DERR("ftok fail %s %d %d %s", tmpfilename, pid, errno, strerror(errno));
+        DERR("ftok fail %s %d %d %s", tmpfilename, proj, errno, strerror(errno));
         return -1;
     }
 
-    DLOG("ftok key %d", key);
+    DLOG("ftok key %d path %s", key, tmpfilename);
 
-    int qid = msgget(key, 0666 | IPC_CREAT);
+    int qid = msgget(key, mode | IPC_CREAT);
     if (qid < 0) {
         DERR("msgget fail %d %d %s", key, errno, strerror(errno));
         return -1;
