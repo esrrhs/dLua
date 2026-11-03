@@ -7,7 +7,8 @@ extern "C" {
 }
 
 struct BreakPoint {
-    std::string file;
+    std::string file;       // user/display path
+    std::string norm_file;  // normalized key for matching
     int line;
     int no;
     bool en;
@@ -61,7 +62,55 @@ extern "C" int stop_agent() {
     return 0;
 }
 
-std::string get_file_code(std::string filename, int lineno) {
+// Strip leading "./" segments for stable comparison / open attempts.
+std::string normalize_src_path(std::string path) {
+    while (path.size() >= 2 && path[0] == '.' && path[1] == '/') {
+        path = path.substr(2);
+    }
+    return path;
+}
+
+std::string basename_src(const std::string &path) {
+    size_t pos = path.find_last_of("/\\");
+    if (pos == std::string::npos) {
+        return path;
+    }
+    return path.substr(pos + 1);
+}
+
+// Match Lua short_src against a user breakpoint path:
+// exact (after normalize), path-suffix with '/' boundary, or basename fallback.
+bool match_src(const std::string &lhs, const std::string &rhs) {
+    std::string a = normalize_src_path(lhs);
+    std::string b = normalize_src_path(rhs);
+    if (a == b) {
+        return true;
+    }
+    if (a.empty() || b.empty()) {
+        return false;
+    }
+
+    auto is_path_suffix = [](const std::string &full, const std::string &suf) {
+        if (suf.size() > full.size()) {
+            return false;
+        }
+        if (full.compare(full.size() - suf.size(), suf.size(), suf) != 0) {
+            return false;
+        }
+        if (suf.size() == full.size()) {
+            return true;
+        }
+        char sep = full[full.size() - suf.size() - 1];
+        return sep == '/' || sep == '\\';
+    };
+
+    if (is_path_suffix(a, b) || is_path_suffix(b, a)) {
+        return true;
+    }
+    return basename_src(a) == basename_src(b);
+}
+
+static std::string get_file_code_one(const std::string &filename, int lineno) {
     FILE *fp = fopen(filename.c_str(), "r");
     if (fp == NULL) {
         return "";
@@ -84,6 +133,48 @@ std::string get_file_code(std::string filename, int lineno) {
     }
     ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
     return ret;
+}
+
+std::string get_file_code(std::string filename, int lineno) {
+    std::vector <std::string> candidates;
+    auto add_cand = [&](const std::string &p) {
+        if (p.empty()) {
+            return;
+        }
+        for (const auto &c : candidates) {
+            if (c == p) {
+                return;
+            }
+        }
+        candidates.push_back(p);
+    };
+
+    add_cand(filename);
+    std::string norm = normalize_src_path(filename);
+    add_cand(norm);
+    std::string base = basename_src(norm);
+    add_cand(base);
+    if (!norm.empty() && norm[0] != '/') {
+        add_cand(std::string("./") + norm);
+    }
+    // Also try parent-relative when short_src is basename-only vs nested path.
+    if (base != norm && !base.empty()) {
+        add_cand(std::string("./") + base);
+    }
+
+    for (const auto &cand : candidates) {
+        std::string code = get_file_code_one(cand, lineno);
+        if (!code.empty()) {
+            return code;
+        }
+        // Distinguish missing file vs blank line: if fopen works, return blank as-is.
+        FILE *fp = fopen(cand.c_str(), "r");
+        if (fp != NULL) {
+            fclose(fp);
+            return code;
+        }
+    }
+    return "";
 }
 
 int lastlevel(lua_State *L) {
@@ -526,8 +617,8 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
 
     int bindex = -1;
     int maxno = -1;
-    for (int i = 0; i < g_blist.size(); ++i) {
-        if (g_blist[i].file == file && g_blist[i].line == line) {
+    for (int i = 0; i < (int) g_blist.size(); ++i) {
+        if (match_src(g_blist[i].file, file) && g_blist[i].line == line) {
             bindex = i;
             break;
         }
@@ -576,11 +667,15 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
     if (bindex == -1) {
         BreakPoint b;
         b.file = file;
+        b.norm_file = normalize_src_path(file);
         b.line = line;
         b.no = maxno + 1;
         b.hit = 0;
         g_blist.push_back(b);
         bindex = g_blist.size() - 1;
+    } else {
+        g_blist[bindex].file = file;
+        g_blist[bindex].norm_file = normalize_src_path(file);
     }
     g_blist[bindex].en = true;
     g_blist[bindex].ifstr = ifparam;
@@ -1443,8 +1538,8 @@ int check_bp(lua_State *L) {
 
     int bindex = -1;
 
-    for (int i = 0; i < g_blist.size(); ++i) {
-        if (g_blist[i].en && g_blist[i].file == curfile && g_blist[i].line == curline) {
+    for (int i = 0; i < (int) g_blist.size(); ++i) {
+        if (g_blist[i].en && match_src(g_blist[i].file, curfile) && g_blist[i].line == curline) {
             bool hit = false;
             if (g_blist[i].iffunc != "") {
                 int oldn = lua_gettop(L);

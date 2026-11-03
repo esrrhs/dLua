@@ -11,6 +11,7 @@ extern "C" {
 // Forward declarations of agent internals that we want to test
 struct BreakPoint {
     std::string file;
+    std::string norm_file;
     int line;
     int no;
     bool en;
@@ -33,6 +34,9 @@ int process_en_command(lua_State *L, const std::vector<std::string> &result);
 int process_i_command(lua_State *L, const std::vector<std::string> &result);
 bool find_and_push_val(lua_State *L, std::string param, int level);
 std::string get_file_code(std::string filename, int lineno);
+std::string normalize_src_path(std::string path);
+std::string basename_src(const std::string &path);
+bool match_src(const std::string &lhs, const std::string &rhs);
 
 // Helper mock for send_msg used by agent functions during tests
 // Since agent.cpp uses static send_msg/recv_msg from common.h, we can capture or inspect queues.
@@ -325,6 +329,56 @@ int main() {
         }
         assert(found_info);
         g_blist.clear();
+        std::cout << "  -> PASS" << std::endl;
+    }
+
+    // Test 5b: Source path normalize / match / get_file_code variants
+    std::cout << "[Test 5b] Testing source-path matching..." << std::endl;
+    {
+        assert(normalize_src_path("./foo/bar.lua") == "foo/bar.lua");
+        assert(normalize_src_path("././x.lua") == "x.lua");
+        assert(normalize_src_path("foo/bar.lua") == "foo/bar.lua");
+        assert(basename_src("foo/bar.lua") == "bar.lua");
+        assert(basename_src("bar.lua") == "bar.lua");
+
+        assert(match_src("foo/bar.lua", "bar.lua"));
+        assert(match_src("bar.lua", "foo/bar.lua"));
+        assert(match_src("./foo/bar.lua", "foo/bar.lua"));
+        assert(match_src("a/foo/bar.lua", "foo/bar.lua"));
+        assert(match_src("foo/bar.lua", "foo/bar.lua"));
+        assert(!match_src("foo/bar.lua", "baz.lua"));
+        assert(!match_src("foo/bar.lua", "obar.lua"));
+
+        // Nested dir on disk vs basename breakpoint path
+        system("mkdir -p foo_src_test");
+        {
+            FILE *fp = fopen("foo_src_test/bar.lua", "w");
+            assert(fp != NULL);
+            fputs("local x = 1\nlocal y = 2\n", fp);
+            fclose(fp);
+        }
+        std::string code = get_file_code("foo_src_test/bar.lua", 2);
+        assert(code.find("local y") != std::string::npos);
+        // basename-only open from CWD fails; get_file_code may still miss if only basename given
+        // and file lives in subdir — that's expected. Matching is for short_src vs user path.
+        code = get_file_code("./foo_src_test/bar.lua", 1);
+        assert(code.find("local x") != std::string::npos);
+
+        g_blist.clear();
+        char data[QUEUED_MESSAGE_MSG_LEN] = "b foo_src_test/bar.lua:2";
+        std::vector<std::string> res = {"b", "foo_src_test/bar.lua:2"};
+        process_b_command(L, res, data);
+        assert(g_blist.size() == 1);
+        assert(g_blist[0].norm_file == "foo_src_test/bar.lua");
+        assert(match_src(g_blist[0].file, "bar.lua"));
+        assert(match_src(g_blist[0].file, "./foo_src_test/bar.lua"));
+
+        // Drain
+        long mtype = 0;
+        char mdata[QUEUED_MESSAGE_MSG_LEN];
+        while (recv_msg(q2, mtype, mdata) == 0 && mtype != 0) {}
+        g_blist.clear();
+        system("rm -rf foo_src_test");
         std::cout << "  -> PASS" << std::endl;
     }
 
