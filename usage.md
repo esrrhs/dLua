@@ -76,7 +76,7 @@ dLua attaches to an already running Lua process using dynamic library injection 
 ## 4. Detailed Usage Examples
 
 ### 4.1 Flexible Breakpoint Syntax
-dLua supports flexible spacing between filenames and line numbers:
+dLua supports flexible spacing (spaces or tabs) between filenames and line numbers around `:`. The line must be digits.
 ```text
 (dlua) b test.lua:23
 Breakpoint 0 at file test.lua, line 23, if 
@@ -89,7 +89,11 @@ code: local tmp = { 1, 2, { 4, 5 } }
 (dlua) b test.lua : 23
 Breakpoint 2 at file test.lua, line 23, if 
 code: local tmp = { 1, 2, { 4, 5 } }
+
+(dlua) b test.lua: 23
+(dlua) b test.lua :23
 ```
+Invalid locations such as `b test.lua:abc` or `b :10` are rejected with a clear error. Filenames may start with the command letter (e.g. `b bug.lua:10`).
 
 ### 4.2 Conditional Breakpoints
 Variables needed for condition calculation must be declared in square brackets `[...]` to be retrieved from local/upvalue scopes:

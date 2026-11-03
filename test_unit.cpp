@@ -22,6 +22,10 @@ struct BreakPoint {
 
 extern std::vector<BreakPoint> g_blist;
 int get_input_val(std::string inputstr, std::map<std::string, int> &inputval, std::string &leftstr);
+void trim_inplace(std::string &s);
+bool is_digits(const std::string &s);
+void strip_command_verb(std::string &input, const std::string &verb);
+bool split_file_line(const std::string &bpos, std::string &file, std::string &linestr);
 int process_b_command(lua_State *L, const std::vector<std::string> &result, char data[QUEUED_MESSAGE_MSG_LEN]);
 int process_d_command(lua_State *L, const std::vector<std::string> &result);
 int process_dis_command(lua_State *L, const std::vector<std::string> &result);
@@ -84,57 +88,144 @@ int main() {
     lua_State *L = luaL_newstate();
     luaL_openlibs(L);
 
-    // Test 3: Breakpoint commands (process_b_command)
-    std::cout << "[Test 3] Testing process_b_command..." << std::endl;
+    // Test 3: Helpers — strip_command_verb / split_file_line / is_digits
+    std::cout << "[Test 3] Testing parse helpers..." << std::endl;
+    {
+        // strip_command_verb: exact token, keep filenames starting with verb letter
+        {
+            std::string s = "b bug.lua:10";
+            strip_command_verb(s, "b");
+            assert(s == "bug.lua:10");
+        }
+        {
+            std::string s = "  b	bfile.lua : 3  ";
+            strip_command_verb(s, "b");
+            assert(s == "bfile.lua : 3");
+        }
+        {
+            std::string s = "p printf_like";
+            strip_command_verb(s, "p");
+            assert(s == "printf_like");
+        }
+        {
+            std::string s = "set setvar=1";
+            strip_command_verb(s, "set");
+            assert(s == "setvar=1");
+        }
+        {
+            std::string s = "r return 1";
+            strip_command_verb(s, "r");
+            assert(s == "return 1");
+        }
+        // no boundary: do not eat into argument
+        {
+            std::string s = "bbug.lua:1";
+            strip_command_verb(s, "b");
+            assert(s == "bbug.lua:1");
+        }
+
+        // split_file_line: spaces and tabs around ':'
+        {
+            std::string f, l;
+            assert(split_file_line("test.lua:10", f, l));
+            assert(f == "test.lua" && l == "10");
+            assert(split_file_line("test.lua: 10", f, l));
+            assert(f == "test.lua" && l == "10");
+            assert(split_file_line("test.lua :10", f, l));
+            assert(f == "test.lua" && l == "10");
+            assert(split_file_line("test.lua : 10", f, l));
+            assert(f == "test.lua" && l == "10");
+            assert(split_file_line("test.lua	:	10", f, l));
+            assert(f == "test.lua" && l == "10");
+            assert(split_file_line("  bfile.lua  :  7  ", f, l));
+            assert(f == "bfile.lua" && l == "7");
+            assert(!split_file_line("test.lua 10", f, l));
+        }
+
+        assert(is_digits("123"));
+        assert(!is_digits(""));
+        assert(!is_digits("12a"));
+        assert(!is_digits(" 12"));
+
+        std::cout << "  -> PASS" << std::endl;
+    }
+
+    // Test 3b: Breakpoint commands (process_b_command) table-driven
+    std::cout << "[Test 3b] Testing process_b_command..." << std::endl;
     {
         g_blist.clear();
 
-        // 3.1 Traditional colon without spaces: "b test.lua:10"
-        char data1[QUEUED_MESSAGE_MSG_LEN] = "b test.lua:10";
-        std::vector<std::string> res1 = {"b", "test.lua:10"};
-        process_b_command(L, res1, data1);
-        assert(g_blist.size() == 1);
-        assert(g_blist[0].file == "test.lua");
-        assert(g_blist[0].line == 10);
-        assert(g_blist[0].no == 0);
-        assert(g_blist[0].en == true);
+        // Create a file whose name starts with 'b' for verb-strip regression
+        {
+            FILE *fp = fopen("btest.lua", "w");
+            assert(fp != NULL);
+            fputs("local a = 1\nlocal b = 2\nlocal c = 3\nlocal d = 4\nlocal e = 5\n", fp);
+            fputs("local f = 6\nlocal g = 7\nlocal h = 8\nlocal i = 9\nlocal j = 10\n", fp);
+            fclose(fp);
+        }
 
-        // 3.2 Space-separated file and line: "b test.lua 20"
-        char data2[QUEUED_MESSAGE_MSG_LEN] = "b test.lua 20";
-        std::vector<std::string> res2 = {"b", "test.lua", "20"};
-        process_b_command(L, res2, data2);
-        assert(g_blist.size() == 2);
-        assert(g_blist[1].file == "test.lua");
-        assert(g_blist[1].line == 20);
-        assert(g_blist[1].no == 1);
+        struct BCase {
+            const char *input;
+            bool expect_ok;
+            const char *expect_file;
+            int expect_line;
+        };
+        BCase cases[] = {
+            {"b test.lua:10", true, "test.lua", 10},
+            {"b test.lua 20", true, "test.lua", 20},
+            {"b test.lua : 25", true, "test.lua", 25},
+            {"b test.lua: 11", true, "test.lua", 11},
+            {"b test.lua :12", true, "test.lua", 12},
+            {"b test.lua	:	13", true, "test.lua", 13},
+            {"b	test.lua:15", true, "test.lua", 15},
+            {"b btest.lua:10", true, "btest.lua", 10},
+            {"b test.lua:abc", false, "", 0},
+            {"b test.lua:", false, "", 0},
+            {"b :10", false, "", 0},
+            {"b test.lua:1x", false, "", 0},
+        };
 
-        // 3.3 Colon with spaces: "b test.lua : 25"
-        char data3[QUEUED_MESSAGE_MSG_LEN] = "b test.lua : 25";
-        std::vector<std::string> res3 = {"b", "test.lua", ":", "25"};
-        process_b_command(L, res3, data3);
-        assert(g_blist.size() == 3);
-        assert(g_blist[2].file == "test.lua");
-        assert(g_blist[2].line == 25);
-        assert(g_blist[2].no == 2);
+        for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+            size_t before = g_blist.size();
+            char data[QUEUED_MESSAGE_MSG_LEN];
+            memset(data, 0, sizeof(data));
+            strncpy(data, cases[i].input, QUEUED_MESSAGE_MSG_LEN - 1);
+            // result only needs size >= 2 when args present; mirror tokenization loosely
+            std::vector<std::string> res;
+            {
+                std::istringstream iss(cases[i].input);
+                for (std::string tok; iss >> tok;) {
+                    res.push_back(tok);
+                }
+            }
+            process_b_command(L, res, data);
+            if (cases[i].expect_ok) {
+                assert(g_blist.size() == before + 1);
+                assert(g_blist.back().file == cases[i].expect_file);
+                assert(g_blist.back().line == cases[i].expect_line);
+            } else {
+                assert(g_blist.size() == before);
+            }
+        }
 
-        // 3.4 Breakpoint with condition: "b test.lua:30 if [x] x == 1"
-        char data4[QUEUED_MESSAGE_MSG_LEN] = "b test.lua:30 if [x] x == 1";
-        std::vector<std::string> res4 = {"b", "test.lua:30", "if", "[x]", "x", "==", "1"};
-        process_b_command(L, res4, data4);
-        assert(g_blist.size() == 4);
-        assert(g_blist[3].file == "test.lua");
-        assert(g_blist[3].line == 30);
-        assert(g_blist[3].ifstr == " x == 1");
-        assert(g_blist[3].iffunc != "");
-
-        // 3.5 Breakpoint with space and condition: "b test.lua 35 if [x] x > 0"
-        char data5[QUEUED_MESSAGE_MSG_LEN] = "b test.lua 35 if [x] x > 0";
-        std::vector<std::string> res5 = {"b", "test.lua", "35", "if", "[x]", "x", ">", "0"};
-        process_b_command(L, res5, data5);
-        assert(g_blist.size() == 5);
-        assert(g_blist[4].file == "test.lua");
-        assert(g_blist[4].line == 35);
-        assert(g_blist[4].ifstr == " x > 0");
+        // Conditional breakpoints (existing coverage)
+        {
+            char data4[QUEUED_MESSAGE_MSG_LEN] = "b test.lua:30 if [x] x == 1";
+            std::vector<std::string> res4 = {"b", "test.lua:30", "if", "[x]", "x", "==", "1"};
+            process_b_command(L, res4, data4);
+            assert(g_blist.back().file == "test.lua");
+            assert(g_blist.back().line == 30);
+            assert(g_blist.back().ifstr == " x == 1");
+            assert(g_blist.back().iffunc != "");
+        }
+        {
+            char data5[QUEUED_MESSAGE_MSG_LEN] = "b test.lua 35 if [x] x > 0";
+            std::vector<std::string> res5 = {"b", "test.lua", "35", "if", "[x]", "x", ">", "0"};
+            process_b_command(L, res5, data5);
+            assert(g_blist.back().file == "test.lua");
+            assert(g_blist.back().line == 35);
+            assert(g_blist.back().ifstr == " x > 0");
+        }
 
         // Drain messages sent to q2
         long mtype = 0;
@@ -147,17 +238,35 @@ int main() {
     // Test 4: Disable, Enable, Delete Breakpoint
     std::cout << "[Test 4] Testing disable, enable, and delete breakpoint..." << std::endl;
     {
-        assert(g_blist.size() == 5);
+        assert(g_blist.size() >= 2);
 
         // Disable breakpoint 1
         std::vector<std::string> dis1 = {"dis", "1"};
         process_dis_command(L, dis1);
-        assert(g_blist[1].en == false);
+        {
+            bool found = false;
+            for (const auto &bp : g_blist) {
+                if (bp.no == 1) {
+                    assert(bp.en == false);
+                    found = true;
+                }
+            }
+            assert(found);
+        }
 
         // Enable breakpoint 1
         std::vector<std::string> en1 = {"en", "1"};
         process_en_command(L, en1);
-        assert(g_blist[1].en == true);
+        {
+            bool found = false;
+            for (const auto &bp : g_blist) {
+                if (bp.no == 1) {
+                    assert(bp.en == true);
+                    found = true;
+                }
+            }
+            assert(found);
+        }
 
         // Disable all breakpoints
         std::vector<std::string> dis_all = {"dis"};
@@ -174,9 +283,10 @@ int main() {
         }
 
         // Delete breakpoint 1
+        size_t before_del = g_blist.size();
         std::vector<std::string> d1 = {"d", "1"};
         process_d_command(L, d1);
-        assert(g_blist.size() == 4);
+        assert(g_blist.size() == before_del - 1);
         for (const auto &bp : g_blist) {
             assert(bp.no != 1);
         }
@@ -231,6 +341,7 @@ int main() {
     }
 
     // Clean up
+    unlink("btest.lua");
     lua_close(L);
     msgctl(q1, IPC_RMID, 0);
     msgctl(q2, IPC_RMID, 0);

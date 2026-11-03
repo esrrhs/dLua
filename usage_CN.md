@@ -76,7 +76,7 @@ dLua 通过动态注入工具（`hookso`）将调试扩展动态库 `dluaagent.s
 ## 4. 典型使用示例
 
 ### 4.1 人性化断点空格语法
-支持文件与行号之间使用冒号或空格分隔：
+支持文件与行号之间使用冒号或空格/Tab 分隔；行号必须为数字：
 ```text
 (dlua) b test.lua:23
 Breakpoint 0 at file test.lua, line 23, if 
@@ -89,7 +89,11 @@ code: local tmp = { 1, 2, { 4, 5 } }
 (dlua) b test.lua : 23
 Breakpoint 2 at file test.lua, line 23, if 
 code: local tmp = { 1, 2, { 4, 5 } }
+
+(dlua) b test.lua: 23
+(dlua) b test.lua :23
 ```
+非法位置（如 `b test.lua:abc`、`b :10`）会报错拒绝。文件名可以以命令字母开头（如 `b bug.lua:10`）。
 
 ### 4.2 设置条件断点
 方括号 `[...]` 内声明需要从当前栈帧/作用域提取的变量名，后续表达式可直接使用这些变量参与计算：

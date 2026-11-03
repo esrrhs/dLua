@@ -156,7 +156,7 @@ int process_help_command() {
     std::string ret = "h\thelp commands\n"
                       "q\tquit\n"
                       "bt\tshow cur call stack\n"
-                      "b\tadd breakpoint, eg: b test.lua:123\n"
+                      "b\tadd breakpoint, eg: b test.lua:123 or b test.lua : 123\n"
                       "i\tshow info, eg: i b\n"
                       "n\tstep next line\n"
                       "s\tstep into next line\n"
@@ -309,6 +309,55 @@ int get_input_val(std::string inputstr, std::map<std::string, int> &inputval, st
     return 0;
 }
 
+
+void trim_inplace(std::string &s) {
+    const char *ws = " \t";
+    size_t b = s.find_first_not_of(ws);
+    if (b == std::string::npos) {
+        s.clear();
+        return;
+    }
+    size_t e = s.find_last_not_of(ws);
+    s.assign(s, b, e - b + 1);
+}
+
+bool is_digits(const std::string &s) {
+    return !s.empty() && std::all_of(s.begin(), s.end(), ::isdigit);
+}
+
+// Strip leading command verb as an exact token (not find_first_not_of char class).
+// E.g. strip_command_verb("b bug.lua:1", "b") -> "bug.lua:1"
+// Does not eat filename prefixes like leading 'b'/'p'/'r' or letters in "set".
+void strip_command_verb(std::string &input, const std::string &verb) {
+    trim_inplace(input);
+    if (input.compare(0, verb.size(), verb) != 0) {
+        return;
+    }
+    if (input.size() == verb.size()) {
+        input.clear();
+        return;
+    }
+    char next = input[verb.size()];
+    if (next != ' ' && next != '\t') {
+        return;
+    }
+    input.erase(0, verb.size());
+    trim_inplace(input);
+}
+
+// Split "file:line" with optional spaces/tabs around ':'. Returns true if ':' found.
+bool split_file_line(const std::string &bpos, std::string &file, std::string &linestr) {
+    size_t cpos = bpos.find(':');
+    if (cpos == std::string::npos) {
+        return false;
+    }
+    file = bpos.substr(0, cpos);
+    linestr = bpos.substr(cpos + 1);
+    trim_inplace(file);
+    trim_inplace(linestr);
+    return true;
+}
+
 int process_b_command(lua_State *L, const std::vector <std::string> &result, char data[QUEUED_MESSAGE_MSG_LEN]) {
     std::string file;
     std::string linestr;
@@ -334,9 +383,7 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
         }
     } else {
         std::string input = data;
-        input.erase(0, input.find_first_not_of(" "));
-        input.erase(0, input.find_first_not_of("b"));
-        input.erase(0, input.find_first_not_of(" "));
+        strip_command_verb(input, "b");
 
         // Check if there is an 'if' condition
         // e.g.: b test.lua:33 if [a,b] a + b == 10
@@ -360,33 +407,28 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
         if (ifpos != std::string::npos) {
             bpos = input.substr(0, ifpos);
             std::string rem = input.substr(ifpos);
-            rem.erase(0, rem.find_first_not_of(" "));
-            rem.erase(0, rem.find_first_not_of("if"));
-            rem.erase(0, rem.find_first_not_of(" "));
+            strip_command_verb(rem, "if");
             ifparam = rem;
         } else {
             bpos = input;
         }
 
-        // Trim bpos
-        bpos.erase(0, bpos.find_first_not_of(" "));
-        bpos.erase(bpos.find_last_not_of(" ") + 1);
+        // Trim bpos (spaces and tabs)
+        trim_inplace(bpos);
 
         DLOG("process_b_command start bpos %s ifparam %s", bpos.c_str(), ifparam.c_str());
 
         // Support formats:
-        // 1) file:line (e.g., test.lua:34 or test.lua : 34)
+        // 1) file:line (e.g., test.lua:34 or test.lua : 34, tabs ok)
         // 2) file line (e.g., test.lua 34)
         // 3) line (e.g., 34)
         // 4) func (e.g., funcname or table.funcname)
-        if (bpos.find(":") != std::string::npos) {
-            size_t cpos = bpos.find(":");
-            file = bpos.substr(0, cpos);
-            linestr = bpos.substr(cpos + 1);
-            file.erase(0, file.find_first_not_of(" "));
-            file.erase(file.find_last_not_of(" ") + 1);
-            linestr.erase(0, linestr.find_first_not_of(" "));
-            linestr.erase(linestr.find_last_not_of(" ") + 1);
+        if (split_file_line(bpos, file, linestr)) {
+            if (file.empty() || !is_digits(linestr)) {
+                send_msg(g_qid_send, SHOW_MSG,
+                         "invalid breakpoint location, expect file:line with numeric line, eg: b test.lua:123\n");
+                return 0;
+            }
         } else {
             std::vector<std::string> btokens;
             std::istringstream biss(bpos);
@@ -462,6 +504,10 @@ int process_b_command(lua_State *L, const std::vector <std::string> &result, cha
     }
 
     DLOG("process_b_command start %s %s %s", file.c_str(), linestr.c_str(), ifparam.c_str());
+    if (!is_digits(linestr)) {
+        send_msg(g_qid_send, SHOW_MSG, "invalid line number, expect digits\n");
+        return 0;
+    }
     int line = atoi(linestr.c_str());
 
     std::string code = get_file_code(file, line);
@@ -702,10 +748,8 @@ int process_p_command(lua_State *L, const std::vector <std::string> &result, cha
     }
 
     std::string input = data;
-    input.erase(0, input.find_first_not_of(" "));
-    input.erase(0, input.find_first_not_of("p"));
-    input.erase(0, input.find_first_not_of(" "));
-    input.erase(input.find_last_not_of(" ") + 1);
+    strip_command_verb(input, "p");
+    trim_inplace(input);
 
     std::string param = input;
 
@@ -988,10 +1032,8 @@ int process_set_command(lua_State *L, const std::vector <std::string> &result, c
     }
 
     std::string input = data;
-    input.erase(0, input.find_first_not_of(" "));
-    input.erase(0, input.find_first_not_of("set"));
-    input.erase(0, input.find_first_not_of(" "));
-    input.erase(input.find_last_not_of(" ") + 1);
+    strip_command_verb(input, "set");
+    trim_inplace(input);
 
     std::map<std::string, int> inputval;
     if (result.size() >= 3 && input.length() > 0 && input[0] == '[') {
@@ -1202,9 +1244,8 @@ int process_r_command(lua_State *L, const std::vector <std::string> &result, cha
     }
 
     std::string input = data;
-    input.erase(0, input.find_first_not_of("r"));
-    input.erase(0, input.find_first_not_of(" "));
-    input.erase(input.find_last_not_of(" ") + 1);
+    strip_command_verb(input, "r");
+    trim_inplace(input);
 
     lua_Debug entry;
     memset(&entry, 0, sizeof(entry));
