@@ -25,6 +25,24 @@ dLua attaches to an already running Lua process using dynamic library injection 
 
 dLua attaches to **one** `lua_State` per session. Multi-state hosts need a separate attach targeting the desired state. Long debugger output is split across SysV messages (`QUEUED_MESSAGE_MSG_LEN` = 1023).
 
+
+## Prerequisites for attach
+
+- Build products: `dlua`, `dluaagent.so` (from `./build.sh`)
+- `hookso` from [esrrhs/hookso](https://github.com/esrrhs/hookso) (no git submodule)
+- `gdb` available on `PATH` (address lookup)
+- ptrace/Yama: processes must be attachable (`kernel.yama.ptrace_scope=0` in CI/smoke)
+
+### Path / environment
+
+| Variable / location | Purpose |
+|---|---|
+| `$DLUA_HOOKSO` | Explicit path to `hookso` executable |
+| `$DLUA_AGENT` | Explicit path to `dluaagent.so` for `dlopen` |
+| next to `dlua` / `./` / `PATH` | Fallback lookup order for `hookso` and the agent |
+
+See also `./scripts/smoke_attach.sh` for a non-interactive inject smoke test.
+
 ## 2. Getting Started
 
 1. **Launch your target Lua script**:

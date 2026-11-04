@@ -20,6 +20,24 @@ dLua 通过动态注入工具（`hookso`）将调试扩展动态库 `dluaagent.s
 
 ---
 
+
+## 附加前置条件
+
+- 编译产物：`dlua`、`dluaagent.so`（由 `./build.sh` 生成）
+- 来自 [esrrhs/hookso](https://github.com/esrrhs/hookso) 的 `hookso`（无 git submodule）
+- `PATH` 上可用的 `gdb`（地址查找）
+- ptrace/Yama：目标进程须可被附加（冒烟/CI 中通常设置 `kernel.yama.ptrace_scope=0`）
+
+### 路径与环境变量
+
+| 变量 / 位置 | 作用 |
+|---|---|
+| `$DLUA_HOOKSO` | `hookso` 可执行文件的显式路径 |
+| `$DLUA_AGENT` | 供 `dlopen` 的 `dluaagent.so` 显式路径 |
+| `dlua` 同目录 / `./` / `PATH` | `hookso` 与 agent 的回退查找顺序 |
+
+非交互注入冒烟测试见 `./scripts/smoke_attach.sh`。
+
 ## 2. 快速使用步骤
 
 1. **运行待调试的 Lua 程序**：

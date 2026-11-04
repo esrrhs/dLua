@@ -36,6 +36,7 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include <array>
+#include <limits.h>
 
 const int open_debug = 0;
 
@@ -188,6 +189,177 @@ inline std::string exec_command(const char *cmd, int &out) {
     }
 
     return result;
+}
+
+inline std::string exec_command(const std::string &cmd, int &out) {
+    return exec_command(cmd.c_str(), out);
+}
+
+inline bool path_is_executable(const std::string &path) {
+    if (path.empty()) {
+        return false;
+    }
+    return access(path.c_str(), X_OK) == 0;
+}
+
+inline bool path_is_readable_file(const std::string &path) {
+    if (path.empty()) {
+        return false;
+    }
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) {
+        return false;
+    }
+    if (!S_ISREG(st.st_mode)) {
+        return false;
+    }
+    return access(path.c_str(), R_OK) == 0;
+}
+
+inline std::string dirname_of_path(const std::string &path) {
+    size_t pos = path.find_last_of('/');
+    if (pos == std::string::npos) {
+        return ".";
+    }
+    if (pos == 0) {
+        return "/";
+    }
+    return path.substr(0, pos);
+}
+
+inline std::string get_self_exe_path() {
+    char buf[PATH_MAX];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n < 0) {
+        return "";
+    }
+    buf[n] = 0;
+    return std::string(buf);
+}
+
+inline std::string make_absolute_path(const std::string &path) {
+    if (path.empty()) {
+        return path;
+    }
+    char *rp = realpath(path.c_str(), nullptr);
+    if (rp) {
+        std::string out(rp);
+        free(rp);
+        return out;
+    }
+    if (path[0] == '/') {
+        return path;
+    }
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)) != nullptr) {
+        return std::string(cwd) + "/" + path;
+    }
+    return path;
+}
+
+// Resolve hookso binary. Order:
+// 1. $DLUA_HOOKSO if executable
+// 2. dirname(/proc/self/exe)/hookso
+// 3. ./hookso
+// 4. hookso on PATH
+// On failure, writes a clear stderr-oriented message into err listing where looked.
+inline std::string resolve_hookso(std::string &err) {
+    std::vector <std::string> looked;
+    err.clear();
+
+    const char *env = getenv("DLUA_HOOKSO");
+    if (env != nullptr && env[0] != '\0') {
+        looked.push_back(std::string("$DLUA_HOOKSO=") + env);
+        if (path_is_executable(env)) {
+            return make_absolute_path(env);
+        }
+    }
+
+    std::string exe = get_self_exe_path();
+    if (!exe.empty()) {
+        std::string cand = dirname_of_path(exe) + "/hookso";
+        looked.push_back(cand);
+        if (path_is_executable(cand)) {
+            return make_absolute_path(cand);
+        }
+    } else {
+        looked.push_back("(dirname(/proc/self/exe)/hookso: /proc/self/exe unreadable)");
+    }
+
+    looked.push_back("./hookso");
+    if (path_is_executable("./hookso")) {
+        return make_absolute_path("./hookso");
+    }
+
+    const char *pathenv = getenv("PATH");
+    if (pathenv != nullptr && pathenv[0] != '\0') {
+        std::stringstream ss(pathenv);
+        std::string dir;
+        while (std::getline(ss, dir, ':')) {
+            if (dir.empty()) {
+                continue;
+            }
+            std::string cand = dir + "/hookso";
+            looked.push_back(cand);
+            if (path_is_executable(cand)) {
+                return make_absolute_path(cand);
+            }
+        }
+    } else {
+        looked.push_back("hookso on PATH (PATH unset)");
+    }
+
+    err = "cannot find executable hookso; looked in:\n";
+    for (size_t i = 0; i < looked.size(); ++i) {
+        err += "  ";
+        err += looked[i];
+        err += "\n";
+    }
+    err += "Set DLUA_HOOKSO to an executable hookso, or place hookso next to dlua / on PATH.\n";
+    return "";
+}
+
+// Resolve dluaagent.so for dlopen (absolute path). Order:
+// 1. $DLUA_AGENT
+// 2. dirname(exe)/dluaagent.so
+// 3. ./dluaagent.so
+// Post-inject hookso call still uses soname "dluaagent.so".
+inline std::string resolve_dluaagent(std::string &err) {
+    std::vector <std::string> looked;
+    err.clear();
+
+    const char *env = getenv("DLUA_AGENT");
+    if (env != nullptr && env[0] != '\0') {
+        looked.push_back(std::string("$DLUA_AGENT=") + env);
+        if (path_is_readable_file(env)) {
+            return make_absolute_path(env);
+        }
+    }
+
+    std::string exe = get_self_exe_path();
+    if (!exe.empty()) {
+        std::string cand = dirname_of_path(exe) + "/dluaagent.so";
+        looked.push_back(cand);
+        if (path_is_readable_file(cand)) {
+            return make_absolute_path(cand);
+        }
+    } else {
+        looked.push_back("(dirname(/proc/self/exe)/dluaagent.so: /proc/self/exe unreadable)");
+    }
+
+    looked.push_back("./dluaagent.so");
+    if (path_is_readable_file("./dluaagent.so")) {
+        return make_absolute_path("./dluaagent.so");
+    }
+
+    err = "cannot find dluaagent.so; looked in:\n";
+    for (size_t i = 0; i < looked.size(); ++i) {
+        err += "  ";
+        err += looked[i];
+        err += "\n";
+    }
+    err += "Set DLUA_AGENT to the agent shared library path, or place dluaagent.so next to dlua.\n";
+    return "";
 }
 
 #endif //DLUA_COMMON_H

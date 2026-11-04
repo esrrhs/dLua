@@ -6,8 +6,12 @@ on:
   pull_request:
     branches: [ master ]
 
+# Pin esrrhs/hookso master tip used by attach-smoke (no git submodule).
+env:
+  HOOKSO_SHA: 8317dbcbc5250df92c1dc96271ab4fcebe41f200
+
 jobs:
-  build:
+  unit:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -39,3 +43,56 @@ jobs:
     - name: test
       run: |
         ./test_unit
+
+  attach-smoke:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: checkout-hookso
+      uses: actions/checkout@v4
+      with:
+        repository: esrrhs/hookso
+        ref: ${{ env.HOOKSO_SHA }}
+        path: _hookso
+
+    - name: prepare-deps
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libreadline-dev wget build-essential gdb
+
+    - name: relax-yama-ptrace
+      run: |
+        # Allow ptrace attach for hookso/gdb smoke (CI runner is not a parent of the lua target).
+        if [ -w /proc/sys/kernel/yama/ptrace_scope ]; then
+          echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
+        else
+          sudo sysctl -w kernel.yama.ptrace_scope=0 || true
+        fi
+        cat /proc/sys/kernel/yama/ptrace_scope || true
+
+    - name: build-lua
+      run: |
+        VER=5.4.7
+        wget https://www.lua.org/ftp/lua-${VER}.tar.gz
+        tar -xf lua-${VER}.tar.gz
+        cd lua-${VER}
+        make linux
+        sudo make install
+        lua -v
+
+    - name: build-hookso
+      run: |
+        (cd _hookso && ./build.sh)
+        cp _hookso/hookso ./hookso
+        chmod +x ./hookso
+
+    - name: build-dlua
+      run: |
+        ./build.sh
+
+    - name: smoke-attach
+      run: |
+        export DLUA_HOOKSO="$PWD/hookso"
+        export DLUA_AGENT="$PWD/dluaagent.so"
+        ./scripts/smoke_attach.sh

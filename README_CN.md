@@ -31,6 +31,9 @@
 - 支持 C++11 及以上标准的 GCC / G++
 - GNU Readline 开发库（`libreadline-dev`）
 - [Lua 5.3+](https://www.lua.org/download.html) 头文件与开发库
+- `gdb`（附加时用于解析 Lua VM 函数地址）
+- [hookso](https://github.com/esrrhs/hookso) 可执行文件（不以内嵌 submodule 形式打包；CI 以固定 SHA checkout）
+- ptrace 权限：若 `/proc/sys/kernel/yama/ptrace_scope` 为 `1`，需放宽为 `0` 或以允许 ptrace 的方式运行（否则 hookso/gdb 无法附加）
 
 ### 编译步骤
 1. 克隆代码仓库：
@@ -46,7 +49,34 @@
    ```bash
    ./test_unit
    ```
-4. 下载编译 [hookso](https://github.com/esrrhs/hookso)（共享库动态注入工具），将编译得到的 `hookso` 与 `dlua`、`dluaagent.so` 放置在同级目录下即可使用。
+4. 编译或下载 [hookso](https://github.com/esrrhs/hookso)，并按下方 **运行时路径查找** 使其可被发现（常见做法：与 `dlua` / `dluaagent.so` 放在同级目录）。
+
+### 运行时路径查找
+
+`dlua` **不使用** git submodule，而是在运行时解析依赖：
+
+**hookso**（`resolve_hookso` / `g_hookso`）：
+1. `$DLUA_HOOKSO`（若可执行）
+2. `dirname(/proc/self/exe)/hookso`
+3. `./hookso`
+4. `PATH` 上的 `hookso`
+
+失败时会在 stderr 列出所有查找路径。
+
+**dluaagent.so**（供 `dlopen` 的绝对路径）：
+1. `$DLUA_AGENT`
+2. `dirname(exe)/dluaagent.so`
+3. `./dluaagent.so`
+
+注入后，hookso `call` 仍使用 soname `dluaagent.so`。
+
+### 附加冒烟测试（可选）
+
+```bash
+./scripts/smoke_attach.sh
+```
+
+基于 hookso 层注入（不使用 readline/expect）：启动 `lua test.lua`，执行 `argp`/`triggerp` dlopen → start/stop → dlclose，并断言 maps / call 成功。
 
 ---
 
@@ -87,6 +117,6 @@
 ## 限制
 
 - **每次附加只调试一个 Lua State**：`dlua` 会附加到目标进程中发现的一个 `lua_State*`。若进程内有多个 Lua 状态，仅能调试附加时所选中的那一个；调试其他状态需要重新附加。
-- **仅支持 Linux + hookso**：动态附加依赖 [hookso](https://github.com/esrrhs/hookso)；本仓库不打包 hookso。
+- **仅支持 Linux + hookso + gdb**：动态附加依赖 [hookso](https://github.com/esrrhs/hookso) 与 `gdb` 地址查找；hookso 在运行时解析（非 submodule 打包）。
 - **源路径匹配**：断点通过 basename/后缀规则匹配 Lua `short_src`；路径歧义时请优先使用 `bt` 中显示的路径。
 

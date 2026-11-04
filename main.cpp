@@ -6,6 +6,7 @@ int g_pid;
 std::string g_sohandle = "";
 std::string g_validfuncaddrvalue = "";
 std::string g_lstr = "";
+std::string g_hookso = "";
 const int MAX_FIND_WAIT_SECONDS = 20;
 const int MAX_CONN_WAIT_SECONDS = 10;
 int g_int;
@@ -19,6 +20,7 @@ const int MAX_TRIGGER_ARG_SECONDS = 1;
 
 int usage() {
     printf("dlua: pid\n");
+    printf("  Env: DLUA_HOOKSO=path/to/hookso  DLUA_AGENT=path/to/dluaagent.so\n");
     return -1;
 }
 
@@ -26,11 +28,10 @@ std::string find_func_addr(std::string hook_func) {
     std::string funcaddrvalue = "";
 
     int out = 0;
-    char cmd[256] = {0};
-    snprintf(cmd, sizeof(cmd), "gdb -p %d -ex \"p (long)%s\" --batch", g_pid, hook_func.c_str());
+    std::string cmd = "gdb -p " + std::to_string(g_pid) + " -ex \"p (long)" + hook_func + "\" --batch";
     std::string ret = exec_command(cmd, out);
     if (out != 0) {
-        DLOG("exec_command fail pid %d command %s", g_pid, cmd);
+        DLOG("exec_command fail pid %d command %s", g_pid, cmd.c_str());
         return funcaddrvalue;
     }
 
@@ -67,12 +68,11 @@ long long find_luastate_breakpoint(std::string hook_func, std::string &validfunc
     // get hook_func func param
     {
         int out = 0;
-        char cmd[256] = {0};
-        snprintf(cmd, sizeof(cmd), "timeout %d ./hookso argp %d %s 1", MAX_TRIGGER_ARG_SECONDS, g_pid,
-                 funcaddrvalue.c_str());
+        std::string cmd = "timeout " + std::to_string(MAX_TRIGGER_ARG_SECONDS) + " " + g_hookso +
+                          " argp " + std::to_string(g_pid) + " " + funcaddrvalue + " 1";
         std::string ret = exec_command(cmd, out);
         if (out != 0) {
-            DLOG("exec_command fail pid %d command %s", g_pid, cmd);
+            DLOG("exec_command fail pid %d command %s", g_pid, cmd.c_str());
             return -1;
         }
         ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
@@ -107,11 +107,10 @@ int fini_env() {
     // close agent
     {
         int out = 0;
-        char cmd[256] = {0};
-        snprintf(cmd, sizeof(cmd), "./hookso call %d dluaagent.so stop_agent", g_pid);
+        std::string cmd = g_hookso + " call " + std::to_string(g_pid) + " dluaagent.so stop_agent";
         std::string ret = exec_command(cmd, out);
         if (out != 0) {
-            DERR("exec_command fail pid %d command %s", g_pid, cmd);
+            DERR("exec_command fail pid %d command %s", g_pid, cmd.c_str());
             return -1;
         }
         ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
@@ -121,11 +120,10 @@ int fini_env() {
     // wait agent stop
     while (1) {
         int out = 0;
-        char cmd[256] = {0};
-        snprintf(cmd, sizeof(cmd), "./hookso call %d dluaagent.so is_stop_agent", g_pid);
+        std::string cmd = g_hookso + " call " + std::to_string(g_pid) + " dluaagent.so is_stop_agent";
         std::string ret = exec_command(cmd, out);
         if (out != 0) {
-            DERR("exec_command fail pid %d command %s", g_pid, cmd);
+            DERR("exec_command fail pid %d command %s", g_pid, cmd.c_str());
             return -1;
         }
         ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
@@ -138,12 +136,12 @@ int fini_env() {
     // close so
     {
         int out = 0;
-        char cmd[256] = {0};
-        snprintf(cmd, sizeof(cmd), "timeout %d ./hookso triggerp %d %s dlclose %s", MAX_TRIGGER_DLCLOSE_SECONDS, g_pid,
-                 g_validfuncaddrvalue.c_str(), g_sohandle.c_str());
+        std::string cmd = "timeout " + std::to_string(MAX_TRIGGER_DLCLOSE_SECONDS) + " " + g_hookso +
+                          " triggerp " + std::to_string(g_pid) + " " + g_validfuncaddrvalue +
+                          " dlclose " + g_sohandle;
         std::string ret = exec_command(cmd, out);
         if (out != 0) {
-            DERR("exec_command fail pid %d command %s", g_pid, cmd);
+            DERR("exec_command fail pid %d command %s", g_pid, cmd.c_str());
             return -1;
         }
         ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
@@ -187,15 +185,24 @@ int init_env() {
 
     signal(SIGINT, int_handler);
 
-    // inject so
+    std::string agent_err;
+    std::string agent_path = resolve_dluaagent(agent_err);
+    if (agent_path.empty()) {
+        fprintf(stderr, "%s", agent_err.c_str());
+        DERR("resolve_dluaagent fail");
+        return -1;
+    }
+    DLOG("dluaagent path %s", agent_path.c_str());
+
+    // inject so (absolute path for dlopen; post-inject calls still use soname dluaagent.so)
     {
         int out = 0;
-        char cmd[256] = {0};
-        snprintf(cmd, sizeof(cmd), "timeout %d ./hookso triggerp %d %s dlopen ./dluaagent.so",
-                 MAX_TRIGGER_DLCLOSE_SECONDS, g_pid, validfuncaddrvalue.c_str());
+        std::string cmd = "timeout " + std::to_string(MAX_TRIGGER_DLOPEN_SECONDS) + " " + g_hookso +
+                          " triggerp " + std::to_string(g_pid) + " " + validfuncaddrvalue +
+                          " dlopen " + agent_path;
         std::string ret = exec_command(cmd, out);
         if (out != 0) {
-            DERR("exec_command fail pid %d command %s", g_pid, cmd);
+            DERR("exec_command fail pid %d command %s", g_pid, cmd.c_str());
             return -1;
         }
         ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
@@ -207,11 +214,11 @@ int init_env() {
     // open agent
     {
         int out = 0;
-        char cmd[256] = {0};
-        snprintf(cmd, sizeof(cmd), "./hookso call %d dluaagent.so start_agent i=%s i=%d", g_pid, lstr.c_str(), g_pid);
+        std::string cmd = g_hookso + " call " + std::to_string(g_pid) +
+                          " dluaagent.so start_agent i=" + lstr + " i=" + std::to_string(g_pid);
         std::string ret = exec_command(cmd, out);
         if (out != 0) {
-            DERR("exec_command fail pid %d command %s", g_pid, cmd);
+            DERR("exec_command fail pid %d command %s", g_pid, cmd.c_str());
             return -1;
         }
         ret.erase(std::remove(ret.begin(), ret.end(), '\n'), ret.end());
@@ -356,6 +363,14 @@ int main(int argc, char **argv) {
 
     DLOG("start main %d", pid);
     g_pid = pid;
+
+    std::string hookso_err;
+    g_hookso = resolve_hookso(hookso_err);
+    if (g_hookso.empty()) {
+        fprintf(stderr, "%s", hookso_err.c_str());
+        exit(-1);
+    }
+    DLOG("hookso path %s", g_hookso.c_str());
 
     // Per-pid paths so ftok keys cannot collide across pids (proj_id is 8-bit).
     std::string path1 = dlua_ipc_tmp_path(g_pid, 1);
