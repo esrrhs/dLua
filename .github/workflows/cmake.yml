@@ -43,6 +43,7 @@ jobs:
     - name: test
       run: |
         ./test_unit
+        ./test_scenarios
 
   attach-smoke:
     runs-on: ubuntu-latest
@@ -96,3 +97,4 @@ jobs:
         export DLUA_HOOKSO="$PWD/hookso"
         export DLUA_AGENT="$PWD/dluaagent.so"
         ./scripts/smoke_attach.sh
+        timeout 90 ./scripts/smoke_scenarios.sh

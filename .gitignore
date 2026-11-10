@@ -32,6 +32,7 @@
 *.app
 dlua
 test_unit
+test_scenarios
 
 # Local hookso binary (resolved at runtime; not vendored)
 hookso

@@ -1919,9 +1919,18 @@ void hook_handler(lua_State *L, lua_Debug *par) {
             return;
         }
         g_opening = RUNNING_STATE_STOP;
+        // fini_agent restores the hook only on g_L. lua_newthread copies the
+        // hook to later coroutines; disarm leftovers on this thread.
+        if (L != g_L) {
+            lua_sethook(L, NULL, 0, 0);
+        }
         return;
     } else if (g_opening == RUNNING_STATE_STOP) {
-        DERR("hook_handler fail");
+        if (L != g_L) {
+            lua_sethook(L, NULL, 0, 0);
+        } else {
+            DERR("hook_handler fail");
+        }
         return;
     }
 

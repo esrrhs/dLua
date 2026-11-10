@@ -49,6 +49,9 @@ cleanup() {
     kill "$LUA_PID" 2>/dev/null || true
     wait "$LUA_PID" 2>/dev/null || true
   fi
+  if [[ -n "${LUA_PID:-}" ]]; then
+    "$ROOT/scripts/ipc_cleanup.sh" "$LUA_PID" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
